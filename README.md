@@ -54,6 +54,13 @@ Dự án này được fork và phát triển từ [xiaozhi-esp32](https://githu
 - 📊 Hiển thị phổ âm thanh trên màn hình **OLED**
 - Giao diện trực quan, đẹp mắt khi phát nhạc và Radio
 
+### ⏰ Tiện Ích Thông Minh
+
+| Tính năng | Mô tả | Trạng thái |
+|-----------|-------|------------|
+| ⏰ **Hẹn Giờ Báo Thức** | Thiết lập và quản lý nhiều báo thức  
+| 🎙️ **Chủ Động Wakeup & thông báo** | 
+
 ### 🔄 Cập Nhật & Triển Khai
 
 #### Hệ Thống OTA online
@@ -144,13 +151,6 @@ Các tính năng sau đây đang được phát triển tích cực và sẽ đ�
 | 🎚️ **Tăng Mic Gain với UI** | Điều chỉnh độ nhạy microphone qua giao diện | 🔨 Đang phát triển |
 | 🔄 **Update V1 lên V2** | Hỗ trợ nâng cấp từ phiên bản V1 lên V2 | 📋 Kế hoạch |
 | 🖥️ **Hỗ Trợ Màn Hình Mới** | Build firmware cho các loại màn hình mới | 🔨 Đang phát triển |
-
-### ⏰ Tiện Ích Thông Minh
-
-| Tính năng | Mô tả | Trạng thái |
-|-----------|-------|------------|
-| ⏰ **Hẹn Giờ Báo Thức** | Thiết lập và quản lý nhiều báo thức | 🔨 Đang phát triển |
-| 🎙️ **Chủ Động Wakeup & thông báo** | Tự động kích hoạt và gửi văn bản theo lịch | 📋 Kế hoạch |
 
 ### 🏭 Tự Động Hóa Công Nghiệp
 
