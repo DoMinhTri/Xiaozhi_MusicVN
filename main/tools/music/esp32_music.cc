@@ -24,10 +24,15 @@
 
 #define TAG "Esp32Music"
 
-// std::string base_url = "http://www.xiaozhishop.xyz:5005";
-// Example: http://www.xiaozhishop.xyz:5005/stream_pcm?song=Con%20mua%20bang%20gia&artist=Bang%20Kieu
-// For local server testing, you should change to your own server address
-#define DEFAULT_MUSIC_URL "http://14.225.204.77:5005"
+
+// #define DEFAULT_MUSIC_URL "http://192.168.1.2:5555"
+// Fallback server URLs for increased reliability
+// Try primary server first, then fallback servers if primary fails
+static const std::vector<std::string> FALLBACK_MUSIC_URLS = {
+    "http://103.57.220.106:5555",   // Primary server
+    "http://14.225.204.77:5005"     // Fallback server 1
+    //"http://110.42.59.54:2233"    // Fallback server 2
+};
 
 // ========== Simple ESP32 Authentication Function ==========
 
@@ -109,10 +114,10 @@ static void add_auth_headers(Http* http) {
     }
 }
 
-// URL encoding function
+// URL encoding function with UTF-8 support
 static std::string url_encode(const std::string& str) {
     std::string encoded;
-    char hex[4];
+    static const char hex_chars[] = "0123456789ABCDEF";
     
     for (size_t i = 0; i < str.length(); i++) {
         unsigned char c = str[i];
@@ -123,49 +128,15 @@ static std::string url_encode(const std::string& str) {
             c == '-' || c == '_' || c == '.' || c == '~') {
             encoded += c;
         } else if (c == ' ') {
-            encoded += '+';  // Space encoded as '+' or '%20'
+            encoded += '+';  // Space encoded as '+' for form data
         } else {
-            snprintf(hex, sizeof(hex), "%%%02X", c);
-            encoded += hex;
+            // Handle UTF-8 multi-byte sequences
+            encoded += '%';
+            encoded += hex_chars[c >> 4];
+            encoded += hex_chars[c & 0x0F];
         }
     }
     return encoded;
-}
-
-// Add a helper function at the beginning of the file to handle URL construction
-static std::string buildUrlWithParams(const std::string& base_url, const std::string& path, const std::string& query) {
-    std::string result_url = base_url + path + "?";
-    size_t pos = 0;
-    size_t amp_pos = 0;
-    
-    while ((amp_pos = query.find("&", pos)) != std::string::npos) {
-        std::string param = query.substr(pos, amp_pos - pos);
-        size_t eq_pos = param.find("=");
-        
-        if (eq_pos != std::string::npos) {
-            std::string key = param.substr(0, eq_pos);
-            std::string value = param.substr(eq_pos + 1);
-            result_url += key + "=" + url_encode(value) + "&";
-        } else {
-            result_url += param + "&";
-        }
-        
-        pos = amp_pos + 1;
-    }
-    
-    // Process the last parameter
-    std::string last_param = query.substr(pos);
-    size_t eq_pos = last_param.find("=");
-    
-    if (eq_pos != std::string::npos) {
-        std::string key = last_param.substr(0, eq_pos);
-        std::string value = last_param.substr(eq_pos + 1);
-        result_url += key + "=" + url_encode(value);
-    } else {
-        result_url += last_param;
-    }
-    
-    return result_url;
 }
 
 Esp32Music::Esp32Music() : last_downloaded_data_(), current_music_url_(), current_song_name_(),
@@ -291,176 +262,527 @@ void Esp32Music::Initialize() {
 }
 
 bool Esp32Music::Download(const std::string& song_name, const std::string& artist_name) {
-    ESP_LOGI(TAG, "Starting to get music details for: %s", song_name.c_str());
+    ESP_LOGI(TAG, "Starting to get music details for: %s by %s", song_name.c_str(), artist_name.c_str());
+    
+    // Validate input
+    if (song_name.empty()) {
+        ESP_LOGE(TAG, "Song name is empty");
+        return false;
+    }
     
     // Clear previous download state
-	last_downloaded_data_.clear();
-	title_name_.clear();
-	artist_name_.clear();
-	current_song_name_ = song_name;
+    last_downloaded_data_.clear();
+    title_name_.clear();
+    artist_name_.clear();
+    current_song_name_ = song_name;
     
-    // Step 1: Request the stream_pcm API to retrieve audio information
-    std::string base_url = GetCheckMusicServerUrl();
-    std::string full_url = base_url + "/stream_pcm?song=" + url_encode(song_name) + "&artist=" + url_encode(artist_name);
+    // Build list of server URLs to try (primary + fallbacks)
+    std::vector<std::string> server_urls;
     
-    ESP_LOGI(TAG, "Request URL: %s", full_url.c_str());
-    
-    // Use the HTTP client provided by the Board
-    auto network = Board::GetInstance().GetNetwork();
-    auto http = network->CreateHttp(0);
-    
-    // Set basic request headers
-    http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
-    http->SetHeader("Accept", "application/json");
-    
-    // Add ESP32 authentication headers
-    add_auth_headers(http.get());
-    
-    // Open GET connection
-    if (!http->Open("GET", full_url)) {
-        ESP_LOGE(TAG, "Failed to connect to music API");
-        return false;
+    // Add primary server from settings first
+    std::string primary_url = GetCheckMusicServerUrl();
+    if (!primary_url.empty()) {
+        server_urls.push_back(primary_url);
     }
     
-    // Check the response status code
-    int status_code = http->GetStatusCode();
-    if (status_code != 200) {
-        ESP_LOGE(TAG, "HTTP GET failed with status code: %d", status_code);
-        http->Close();
-        return false;
+    // Add fallback servers (if not already in list)
+    for (const auto& fallback_url : FALLBACK_MUSIC_URLS) {
+        if (fallback_url != primary_url && 
+            std::find(server_urls.begin(), server_urls.end(), fallback_url) == server_urls.end()) {
+            server_urls.push_back(fallback_url);
+        }
     }
     
-    // Read the response data
-    last_downloaded_data_ = http->ReadAll();
-    http->Close();
+    // Log all servers being used - DISABLED to protect IP addresses
+    // ESP_LOGI(TAG, "=== Music Server Configuration ===");
+    // ESP_LOGI(TAG, "Total servers configured: %d", (int)server_urls.size());
+    // for (size_t i = 0; i < server_urls.size(); i++) {
+    //     if (i == 0) {
+    //         ESP_LOGI(TAG, "  [PRIMARY] Server %d: %s", (int)i, server_urls[i].c_str());
+    //     } else {
+    //         ESP_LOGI(TAG, "  [FALLBACK] Server %d: %s", (int)i, server_urls[i].c_str());
+    //     }
+    // }
+    ESP_LOGI(TAG, "Searching for: '%s' by '%s'", song_name.c_str(), artist_name.c_str());
+    ESP_LOGI(TAG, "=============================");
     
-    ESP_LOGI(TAG, "HTTP GET Status = %d, content_length = %d", status_code, last_downloaded_data_.length());
-    ESP_LOGD(TAG, "Complete music details response: %s", last_downloaded_data_.c_str());
-    
-    // Simple authentication response check (optional)
-    if (last_downloaded_data_.find("ESP32动态密钥验证失败") != std::string::npos) {
-        ESP_LOGE(TAG, "Authentication failed for song: %s", song_name.c_str());
-        return false;
-    }
-    
-    if (!last_downloaded_data_.empty()) {
-        // Parse the response JSON to extract the audio URL
-        cJSON* response_json = cJSON_Parse(last_downloaded_data_.c_str());
-        if (response_json) {
-            // Extract key information
-            cJSON* artist = cJSON_GetObjectItem(response_json, "artist");
-            cJSON* title = cJSON_GetObjectItem(response_json, "title");
-            cJSON* audio_url = cJSON_GetObjectItem(response_json, "audio_url");
-            cJSON* lyric_url = cJSON_GetObjectItem(response_json, "lyric_url");
-            
-            if (cJSON_IsString(artist)) {
-                ESP_LOGI(TAG, "Artist: %s", artist->valuestring);
-            }
-			if (cJSON_IsString(artist)) {
-				artist_name_ = artist->valuestring;    
-			}
-			if (cJSON_IsString(title)) {
-				title_name_ = title->valuestring;      
-			}
-			
-			// Hiển thị thông tin bài hát sớm, trước khi phát (nếu có LCD)
-			if (display_mode_ == DISPLAY_MODE_SPECTRUM) {
-				auto display = Board::GetInstance().GetDisplay();
-				if (display) {
-					char buf[256];
-					snprintf(buf, sizeof(buf),
-							 "ONLINE 《%s》\n%s • Đang phát...",
-							 title_name_.empty() ? song_name.c_str() : title_name_.c_str(),
-							 artist_name_.empty() ? "Unknown Artist" : artist_name_.c_str());
-
-					display->SetMusicInfo(buf);
-					ESP_LOGI(TAG, "[PATCH] Early SetMusicInfo: %s", buf);
-				}
-			}
-		
-            if (cJSON_IsString(title)) {
-                ESP_LOGI(TAG, "Title: %s", title->valuestring);
+    // Try each server in the list
+    for (size_t server_idx = 0; server_idx < server_urls.size(); server_idx++) {
+        std::string base_url = server_urls[server_idx];
+        
+        // Skip empty URLs
+        if (base_url.empty()) {
+            continue;
+        }
+        
+        // Log which server we're trying - DISABLED to protect IP addresses
+        // if (server_idx == 0) {
+        //     ESP_LOGI(TAG, "[%d/%d] Trying PRIMARY server: %s", (int)server_idx + 1, (int)server_urls.size(), base_url.c_str());
+        // } else {
+        //     ESP_LOGW(TAG, "[%d/%d] PRIMARY server failed, trying FALLBACK server: %s", (int)server_idx + 1, (int)server_urls.size(), base_url.c_str());
+        // }
+        
+        std::string full_url = base_url + "/stream_pcm?song=" + url_encode(song_name) + "&artist=" + url_encode(artist_name);
+        // ESP_LOGD(TAG, "Request URL: %s", full_url.c_str()); // DISABLED to protect server IP
+        
+        // Retry logic with exponential backoff (per server)
+        int retry_count = 0;
+        int max_retries = 3;
+        int timeout_ms = 8000;  // 8 seconds timeout
+        int backoff_ms = 1000;  // Start with 1 second backoff
+        
+        // Retry loop for current server
+        while (retry_count < max_retries) {
+                if (retry_count > 0) {
+                ESP_LOGI(TAG, "Retry attempt %d of %d (waiting %dms)", retry_count + 1, max_retries, backoff_ms);
+                vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+                backoff_ms *= 2;  // Exponential backoff: 1s, 2s, 4s
             }
             
-            // Check if audio_url is valid
-            if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
-                ESP_LOGI(TAG, "Audio URL path: %s", audio_url->valuestring);
+            // Use the HTTP client provided by the Board with explicit timeout
+            auto network = Board::GetInstance().GetNetwork();
+            auto http = network->CreateHttp(timeout_ms);
+            
+            if (!http) {
+                ESP_LOGE(TAG, "Failed to create HTTP client on server %d", (int)server_idx);
+                retry_count++;
+                continue;
+            }
+            
+            // Set basic request headers
+            http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
+            http->SetHeader("Accept", "application/json; charset=utf-8");
+            http->SetHeader("Accept-Language", "vi-VN,vi");
+            http->SetHeader("Connection", "close");  // Close after response
+            
+            // Add ESP32 authentication headers
+            add_auth_headers(http.get());
+            
+            // Open GET connection
+            if (!http->Open("GET", full_url)) {
+                ESP_LOGW(TAG, "Failed to connect to server %d (attempt %d of %d)", 
+                         (int)server_idx, retry_count + 1, max_retries);
+                retry_count++;
+                continue;
+            }
+            
+            // Check the response status code
+            int status_code = http->GetStatusCode();
+            
+            // Accept 2xx status codes
+            if (status_code < 200 || status_code >= 300) {
+                ESP_LOGW(TAG, "HTTP GET failed with status code: %d on server %d (attempt %d)", 
+                         status_code, (int)server_idx, retry_count + 1);
                 
-                // Step 2: Construct the complete audio download URL, ensuring URL encoding for audio_url
-                std::string audio_path = audio_url->valuestring;
-                
-                // Use a unified URL construction function
-                if (audio_path.find("?") != std::string::npos) {
-                    size_t query_pos = audio_path.find("?");
-                    std::string path = audio_path.substr(0, query_pos);
-                    std::string query = audio_path.substr(query_pos + 1);
-                    
-                    current_music_url_ = buildUrlWithParams(base_url, path, query);
+                // Retry on 5xx errors or 429 (rate limited)
+                if ((status_code >= 500 && status_code < 600) || status_code == 429) {
+                    http->Close();
+                    retry_count++;
+                    continue;
+                } else if (status_code == 404) {
+                    // 404 means song not found on this server, try next server
+                    ESP_LOGI(TAG, "Song not found on server %d (404), trying next server", (int)server_idx);
+                    http->Close();
+                    break;  // Break inner retry loop, try next server
                 } else {
-                    current_music_url_ = base_url + audio_path;
+                    // Other 4xx errors, try next server
+                    http->Close();
+                    break;  // Try next server
                 }
-                
-                ESP_LOGI(TAG, "Starting streaming playback for: %s", song_name.c_str());
-                song_name_displayed_ = false; 
-				full_info_displayed_ = false;
-				
-                StartStreaming(current_music_url_);
-
-                
-                // Handle lyric URL - only start lyrics in lyric display mode
-                if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
-                    // Construct the complete lyric download URL using the same URL building logic
-                    std::string lyric_path = lyric_url->valuestring;
-                    if (lyric_path.find("?") != std::string::npos) {
-                        size_t query_pos = lyric_path.find("?");
-                        std::string path = lyric_path.substr(0, query_pos);
-                        std::string query = lyric_path.substr(query_pos + 1);
-                        
-                        current_lyric_url_ = buildUrlWithParams(base_url, path, query);
+            }
+            
+            // Read the response data
+            last_downloaded_data_ = http->ReadAll();
+            http->Close();
+            
+            ESP_LOGI(TAG, "HTTP GET Status = %d, response_length = %d", status_code, last_downloaded_data_.length());
+            
+            // Validate response is not empty
+            if (last_downloaded_data_.empty()) {
+                ESP_LOGW(TAG, "Empty response from server %d (attempt %d)", (int)server_idx, retry_count + 1);
+                retry_count++;
+                continue;
+            }
+            
+            // Log response for debugging (limited to 200 chars)
+            if (last_downloaded_data_.length() > 200) {
+                ESP_LOGD(TAG, "Music details response (first 200 chars): %.200s...", last_downloaded_data_.c_str());
+            } else {
+                ESP_LOGD(TAG, "Music details response: %s", last_downloaded_data_.c_str());
+            }
+            
+            // Check for authentication failure
+            if (last_downloaded_data_.find("ESP32动态密钥验证失败") != std::string::npos) {
+                ESP_LOGE(TAG, "Authentication failed for song: %s on server %d", song_name.c_str(), (int)server_idx);
+                break;  // Try next server
+            }
+            
+            // Parse the response JSON to extract the audio URL
+            cJSON* response_json = cJSON_Parse(last_downloaded_data_.c_str());
+            if (!response_json) {
+                const char* error_ptr = cJSON_GetErrorPtr();
+                ESP_LOGW(TAG, "Failed to parse JSON response from server %d (attempt %d)", 
+                         (int)server_idx, retry_count + 1);
+                if (error_ptr != NULL) {
+                    ESP_LOGD(TAG, "JSON parse error at: %s", error_ptr);
+                }
+                retry_count++;
+                continue;
+            }
+            
+            // Check if server returned error status (old format)
+            cJSON* status = cJSON_GetObjectItem(response_json, "status");
+            if (cJSON_IsString(status)) {
+                if (strcmp(status->valuestring, "error") == 0) {
+                    cJSON* error_msg = cJSON_GetObjectItem(response_json, "message");
+                    if (cJSON_IsString(error_msg)) {
+                        ESP_LOGW(TAG, "Server %d returned error: %s", (int)server_idx, error_msg->valuestring);
                     } else {
-                        current_lyric_url_ = base_url + lyric_path;
+                        ESP_LOGW(TAG, "Server %d returned error status", (int)server_idx);
+                    }
+                    cJSON_Delete(response_json);
+                    break;  // Try next server
+                }
+            }
+            
+            // Check if this is the new format with "songs" array
+            cJSON* songs_array = cJSON_GetObjectItem(response_json, "songs");
+            if (cJSON_IsArray(songs_array)) {
+                // New JSON format with multiple songs
+                ESP_LOGI(TAG, "=== NEW FORMAT: Multiple Songs Found ===");
+                
+                // Try each song in the array
+                cJSON* song_item = NULL;
+                int song_idx = 0;
+                
+                cJSON_ArrayForEach(song_item, songs_array) {
+                    song_idx++;
+                    if (!cJSON_IsObject(song_item)) {
+                        ESP_LOGW(TAG, "Song item %d is not an object, skipping", song_idx);
+                        continue;
                     }
                     
-                    // Decide whether to start lyrics based on the display mode
-                    if (display_mode_ == DISPLAY_MODE_LYRICS) {
-                        ESP_LOGI(TAG, "Loading lyrics for: %s (lyrics display mode)", song_name.c_str());
+                    // Extract song information
+                    cJSON* artist = cJSON_GetObjectItem(song_item, "artist");
+                    cJSON* title = cJSON_GetObjectItem(song_item, "title");
+                    cJSON* audio_url_item = cJSON_GetObjectItem(song_item, "audio_url");
+                    cJSON* lyric_url = cJSON_GetObjectItem(song_item, "lyric_url");
+                    
+                    // Validate required fields - audio_url is mandatory
+                    if (!cJSON_IsString(audio_url_item) || !audio_url_item->valuestring) {
+                        ESP_LOGW(TAG, "Song %d has no valid audio_url, skipping", song_idx);
+                        continue;
+                    }
+                    
+                    std::string audio_url_path = audio_url_item->valuestring;
+                    
+                    // Extract optional fields
+                    if (cJSON_IsString(artist) && artist->valuestring && strlen(artist->valuestring) > 0) {
+                        artist_name_ = artist->valuestring;
+                    } else {
+                        artist_name_.clear();
+                    }
+                    
+                    if (cJSON_IsString(title) && title->valuestring && strlen(title->valuestring) > 0) {
+                        title_name_ = title->valuestring;
+                    } else {
+                        title_name_.clear();
+                    }
+                    
+                    ESP_LOGI(TAG, "Trying song %d/%d: Title=%s, Artist=%s", 
+                             song_idx, cJSON_GetArraySize(songs_array),
+                             title_name_.empty() ? "Unknown" : title_name_.c_str(),
+                             artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                    
+                    // Construct the full audio URL
+                    if (audio_url_path.find("http://") == 0 || audio_url_path.find("https://") == 0) {
+                        // Already a full URL
+                        current_music_url_ = audio_url_path;
+                    } else if (audio_url_path[0] == '/') {
+                        // Relative path from server root, append to base URL
+                        current_music_url_ = base_url + audio_url_path;
+                    } else {
+                        // Shouldn't happen, but handle it
+                        current_music_url_ = base_url + "/" + audio_url_path;
+                    }
+                    
+                    // ESP_LOGI(TAG, "Testing proxy URL: %s", current_music_url_.c_str());
+                    // Try to connect to this proxy URL to validate it works
+                    auto test_http = Board::GetInstance().GetNetwork()->CreateHttp(5000);  // 5 second timeout for test
+                    if (!test_http) {
+                        ESP_LOGW(TAG, "Failed to create HTTP client for song %d test", song_idx);
+                        ESP_LOGI(TAG, "✗ Song %d FAILED - Could not create HTTP client", song_idx);
+                        continue;
+                    }
+                    
+                    test_http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
+                    test_http->SetHeader("Connection", "close");
+                    add_auth_headers(test_http.get());
+                    
+                    // Attempt to open connection to proxy URL
+                    if (!test_http->Open("GET", current_music_url_)) {
+                        ESP_LOGW(TAG, "Failed to connect to proxy URL for song %d", song_idx);
+                        ESP_LOGI(TAG, "==================================================");
+                        ESP_LOGI(TAG, "✗ Song %d FAILED - Connection error", song_idx);
+                        ESP_LOGI(TAG, "  Title: %s", title_name_.empty() ? "Unknown" : title_name_.c_str());
+                        ESP_LOGI(TAG, "  Artist: %s", artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                        // ESP_LOGI(TAG, "  URL: %s", current_music_url_.c_str());
+                        ESP_LOGI(TAG, "  Trying next song...");
+                        ESP_LOGI(TAG, "==================================================");
+                        test_http->Close();
+                        continue;
+                    }
+                    
+                    int test_status = test_http->GetStatusCode();
+                    
+                    if (test_status == 200 || test_status == 206) {
+                        // Successfully connected and got valid status
+                        test_http->Close();
                         
-                        // Start lyric download and display
-                        if (is_lyric_running_) {
-                            is_lyric_running_ = false;
-                            if (lyric_thread_.joinable()) {
-                                lyric_thread_.join();
+                        ESP_LOGI(TAG, "==================================================");
+                        ESP_LOGI(TAG, "✓ Song %d is PLAYABLE! Status=%d", song_idx, test_status);
+                        ESP_LOGI(TAG, "  Title: %s", title_name_.empty() ? "Unknown" : title_name_.c_str());
+                        ESP_LOGI(TAG, "  Artist: %s", artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                        // ESP_LOGI(TAG, "  URL: %s", current_music_url_.c_str());
+                        ESP_LOGI(TAG, "==================================================");
+                        
+                        // Display early info on LCD
+                        if (display_mode_ == DISPLAY_MODE_SPECTRUM) {
+                            auto display = Board::GetInstance().GetDisplay();
+                            if (display) {
+                                char buf[256];
+                                snprintf(buf, sizeof(buf),
+                                         "ONLINE 《%s》\n%s • Đang phát...",
+                                         title_name_.empty() ? song_name.c_str() : title_name_.c_str(),
+                                         artist_name_.empty() ? "Unknown Artist" : artist_name_.c_str());
+                                display->SetMusicInfo(buf);
+                                ESP_LOGI(TAG, "Early display info: %s", buf);
                             }
                         }
                         
-                        is_lyric_running_ = true;
-                        current_lyric_index_ = -1;
-                        lyrics_.clear();
+                        // Start streaming with this working URL
+                        ESP_LOGI(TAG, "=== MUSIC FOUND ===");
+                        ESP_LOGI(TAG, "Song: %s (Song %d of %d)", song_name.c_str(), song_idx, cJSON_GetArraySize(songs_array));
+                        // ESP_LOGI(TAG, "Server %d: %s", (int)server_idx + 1, base_url.c_str()); // DISABLED to protect IP
+                        ESP_LOGI(TAG, "Title: %s | Artist: %s", 
+                                title_name_.empty() ? "Unknown" : title_name_.c_str(),
+                                artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                        // ESP_LOGI(TAG, "Audio URL: %s", current_music_url_.c_str());
+                        ESP_LOGI(TAG, "=============================");
+                        ESP_LOGI(TAG, "Starting streaming playback for: %s (from server %d)", song_name.c_str(), (int)server_idx + 1);
                         
-                        lyric_thread_ = std::thread(&Esp32Music::LyricDisplayThread, this);
+                        song_name_displayed_ = false;
+                        full_info_displayed_ = false;
+                        
+                        // ESP_LOGI(TAG, "***** SELECTED SONG TO PLAY *****");
+                        // ESP_LOGI(TAG, "Final URL for playback: %s", current_music_url_.c_str());
+                        // ESP_LOGI(TAG, "*********************************");
+                        
+                        StartStreaming(current_music_url_);
+                        
+                        // Handle lyric URL if provided
+                        if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
+                            std::string lyric_path = lyric_url->valuestring;
+                            
+                            if (lyric_path.find("http://") == 0 || lyric_path.find("https://") == 0) {
+                                current_lyric_url_ = lyric_path;
+                            } else if (lyric_path[0] == '/') {
+                                current_lyric_url_ = base_url + lyric_path;
+                            } else {
+                                current_lyric_url_ = base_url + "/" + lyric_path;
+                            }
+                            
+                            if (display_mode_ == DISPLAY_MODE_LYRICS) {
+                                ESP_LOGI(TAG, "Loading lyrics for: %s", song_name.c_str());
+                                
+                                if (is_lyric_running_) {
+                                    is_lyric_running_ = false;
+                                    if (lyric_thread_.joinable()) {
+                                        lyric_thread_.join();
+                                    }
+                                }
+                                
+                                is_lyric_running_ = true;
+                                current_lyric_index_ = -1;
+                                lyrics_.clear();
+                                
+                                lyric_thread_ = std::thread(&Esp32Music::LyricDisplayThread, this);
+                            }
+                        }
+                        
+                        cJSON_Delete(response_json);
+                        return true;  // ✅ Success with working song
+                        
                     } else {
-                        ESP_LOGI(TAG, "Lyric URL found but spectrum display mode is active, skipping lyrics");
+                        test_http->Close();
+                        
+                        //ESP_LOGI(TAG, "==================================================");
+                        //ESP_LOGI(TAG, "✗ Song %d FAILED - HTTP %d", song_idx, test_status);
+                        //ESP_LOGI(TAG, "  Title: %s", title_name_.empty() ? "Unknown" : title_name_.c_str());
+                        //ESP_LOGI(TAG, "  Artist: %s", artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                        //ESP_LOGI(TAG, "  URL: %s", current_music_url_.c_str());
+                        //ESP_LOGI(TAG, "  Trying next song...");
+                        //ESP_LOGI(TAG, "==================================================");
+                        continue;
                     }
-                } else {
-                    ESP_LOGW(TAG, "No lyric URL found for this song");
+                }  // End of cJSON_ArrayForEach loop
+                
+                // No songs in array were playable
+                ESP_LOGW(TAG, "None of the %d songs in the array were playable", cJSON_GetArraySize(songs_array));
+                cJSON_Delete(response_json);
+                break;  // Try next server
+                
+            } else {
+                // Old format - single song response
+                ESP_LOGI(TAG, "=== OLD FORMAT: Single Song Response ===");
+                
+                // Extract key information
+                cJSON* artist    = cJSON_GetObjectItem(response_json, "artist");
+                cJSON* title     = cJSON_GetObjectItem(response_json, "title");
+                cJSON* audio_url = cJSON_GetObjectItem(response_json, "audio_url");
+                cJSON* lyric_url = cJSON_GetObjectItem(response_json, "lyric_url");
+                
+                // Validate and store artist/title
+                if (cJSON_IsString(artist) && artist->valuestring && strlen(artist->valuestring) > 0) {
+                    artist_name_ = artist->valuestring;
+                    ESP_LOGI(TAG, "Artist: %s", artist->valuestring);
                 }
                 
-                cJSON_Delete(response_json);
-                return true;
-            } else {
-                // audio_url is empty or invalid
-                ESP_LOGE(TAG, "Audio URL not found or empty for song: %s", song_name.c_str());
-                ESP_LOGE(TAG, "Failed to find music: 没有找到歌曲 '%s'", song_name.c_str());
-                cJSON_Delete(response_json);
-                return false;
+                if (cJSON_IsString(title) && title->valuestring && strlen(title->valuestring) > 0) {
+                    title_name_ = title->valuestring;
+                    ESP_LOGI(TAG, "Title: %s", title->valuestring);
+                }
+                
+                // Hiển thị thông tin bài hát sớm (nếu có LCD)
+                if (display_mode_ == DISPLAY_MODE_SPECTRUM) {
+                    auto display = Board::GetInstance().GetDisplay();
+                    if (display) {
+                        char buf[256];
+                        snprintf(buf, sizeof(buf),
+                                 "ONLINE 《%s》\n%s • Đang phát...",
+                                 title_name_.empty() ? song_name.c_str() : title_name_.c_str(),
+                                 artist_name_.empty() ? "Unknown Artist" : artist_name_.c_str());
+                        display->SetMusicInfo(buf);
+                        ESP_LOGI(TAG, "Early display info: %s", buf);
+                    }
+                }
+            
+                // Check if audio_url is valid
+                if (cJSON_IsString(audio_url) && audio_url->valuestring && strlen(audio_url->valuestring) > 0) {
+                    // ESP_LOGI(TAG, "Audio URL path: %s", audio_url->valuestring); // DISABLED to protect URL
+                    
+                    // Step 2: Construct the complete audio download URL
+                    std::string audio_path = audio_url->valuestring;
+                    
+                    // If audio_path starts with '/' (relative path from server), it's a path returned by server
+                    // If it starts with 'http', it's already a full URL
+                    if (audio_path.find("http://") == 0 || audio_path.find("https://") == 0) {
+                        // Already a full URL, use as-is
+                        current_music_url_ = audio_path;
+                        // ESP_LOGD(TAG, "Audio URL is already full: %s", audio_path.c_str());
+                    } else if (audio_path[0] == '/') {
+                        // Relative path from server root, just append to base URL (don't re-encode)
+                        // Server already provided the path with proper encoding/parameters
+                        current_music_url_ = base_url + audio_path;
+                        // ESP_LOGD(TAG, "Constructed audio URL from relative path: %s", current_music_url_.c_str()); // DISABLED to protect URL
+                    } else {
+                        // Shouldn't happen, but handle it
+                        current_music_url_ = base_url + "/" + audio_path;
+                        // ESP_LOGD(TAG, "Audio URL: %s", current_music_url_.c_str());
+                    }
+                    
+                    ESP_LOGI(TAG, "=== MUSIC FOUND ===");
+                    ESP_LOGI(TAG, "Song: %s", song_name.c_str());
+                    // ESP_LOGI(TAG, "Server %d: %s", (int)server_idx + 1, base_url.c_str()); // DISABLED to protect IP
+                    ESP_LOGI(TAG, "Title: %s | Artist: %s", 
+                            title_name_.empty() ? "Unknown" : title_name_.c_str(),
+                            artist_name_.empty() ? "Unknown" : artist_name_.c_str());
+                    // ESP_LOGI(TAG, "Audio URL: %s", current_music_url_.c_str());
+                    // ESP_LOGI(TAG, "=============================");
+                    // ESP_LOGI(TAG, "Starting streaming playback for: %s (from server %d)", song_name.c_str(), (int)server_idx + 1);
+                    song_name_displayed_ = false;
+                    full_info_displayed_ = false;
+                    
+                    StartStreaming(current_music_url_);
+                    
+                    // Handle lyric URL - only start lyrics in lyric display mode
+                    if (cJSON_IsString(lyric_url) && lyric_url->valuestring && strlen(lyric_url->valuestring) > 0) {
+                        std::string lyric_path = lyric_url->valuestring;
+                        
+                        // If lyric_path starts with '/' (relative path from server), append to base URL
+                        // If it starts with 'http', it's already a full URL
+                        if (lyric_path.find("http://") == 0 || lyric_path.find("https://") == 0) {
+                            current_lyric_url_ = lyric_path;
+                            // ESP_LOGD(TAG, "Lyric URL is already full: %s", lyric_path.c_str()); // DISABLED to protect URL
+                        } else if (lyric_path[0] == '/') {
+                            // Relative path from server root, just append to base URL
+                            current_lyric_url_ = base_url + lyric_path;
+                            // ESP_LOGD(TAG, "Constructed lyric URL from relative path: %s", current_lyric_url_.c_str()); // DISABLED to protect URL
+                        } else {
+                            current_lyric_url_ = base_url + "/" + lyric_path;
+                            // ESP_LOGD(TAG, "Lyric URL: %s", current_lyric_url_.c_str()); // DISABLED to protect URL
+                        }
+                        
+                        // Decide whether to start lyrics based on display mode
+                        if (display_mode_ == DISPLAY_MODE_LYRICS) {
+                            ESP_LOGI(TAG, "Loading lyrics for: %s (lyrics display mode)", song_name.c_str());
+                            
+                            // Start lyric download and display
+                            if (is_lyric_running_) {
+                                is_lyric_running_ = false;
+                                if (lyric_thread_.joinable()) {
+                                    lyric_thread_.join();
+                                }
+                            }
+                            
+                            is_lyric_running_ = true;
+                            current_lyric_index_ = -1;
+                            lyrics_.clear();
+                            
+                            lyric_thread_ = std::thread(&Esp32Music::LyricDisplayThread, this);
+                        } else {
+                            ESP_LOGI(TAG, "Spectrum mode active, skipping lyrics");
+                        }
+                    } else {
+                        // ESP_LOGD(TAG, "No lyric URL found for this song"); // DISABLED to protect URL
+                    }
+                    
+                    cJSON_Delete(response_json);
+                    return true;  // ✅ Success with current server
+                        
+                    } else {
+                        // audio_url is empty or invalid
+                        ESP_LOGW(TAG, "Audio URL not found or empty from server %d (attempt %d)", 
+                                 (int)server_idx, retry_count + 1);
+                        
+                        // Check if response indicates "not found"
+                        if (last_downloaded_data_.find("not found") != std::string::npos ||
+                            last_downloaded_data_.find("404") != std::string::npos) {
+                            // Song genuinely not found, try next server
+                            cJSON_Delete(response_json);
+                            break;  // Try next server
+                        }
+                        
+                        // Other reason, retry
+                        cJSON_Delete(response_json);
+                        retry_count++;
+                        continue;
+                    }
             }
-        } else {
-            ESP_LOGE(TAG, "Failed to parse JSON response");
-        }
-    } else {
-        ESP_LOGE(TAG, "Empty response from music API");
-    }
+        }  // end of retry loop for current server
+        
+        // If we reach here, current server failed all retries
+        // Continue to next server in outer loop
+    }  // end of server loop
     
+    // All servers and retries failed
+    // ESP_LOGE(TAG, "=== MUSIC SEARCH FAILED ===");
+    // ESP_LOGE(TAG, "Failed to find music: '%s' by '%s'", song_name.c_str(), artist_name.c_str());
+    // ESP_LOGE(TAG, "Tried %d server(s):", (int)server_urls.size());
+    // for (size_t i = 0; i < server_urls.size(); i++) {
+    //     ESP_LOGE(TAG, "  Server %d: %s (3 retries, 8s timeout each)", (int)i + 1, server_urls[i].c_str());
+    // }
+    // ESP_LOGE(TAG, "=============================");
     return false;
 }
 
@@ -477,8 +799,7 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
         return false;
     }
     
-    ESP_LOGD(TAG, "Starting streaming for URL: %s", music_url.c_str());
-    
+    // ESP_LOGD(TAG, "Starting streaming for URL: %s", music_url.c_str());
     // Stop previous playback and download
     is_downloading_ = false;
     is_playing_ = false;
@@ -519,7 +840,7 @@ bool Esp32Music::StartStreaming(const std::string& music_url) {
     // Configure thread stack size to avoid stack overflow
     esp_pthread_cfg_t cfg = esp_pthread_get_default_config();
     cfg.stack_size = 1024 * 3;  // 3KB stack size
-    cfg.prio = 5;           // Medium priority
+    cfg.prio = 5;               // Medium priority
     cfg.thread_name = "audio_stream";
     esp_pthread_set_cfg(&cfg);
     
@@ -544,7 +865,7 @@ bool Esp32Music::StopStreaming() {
     }
 
     ESP_LOGI(TAG, "Stopping music streaming - current state: downloading=%d, playing=%d", 
-            is_downloading_.load(), is_playing_.load());
+            is_downloading_, is_playing_);
 
     // Reset the sample rate to the original value
     ResetSampleRate();
@@ -642,24 +963,25 @@ bool Esp32Music::StopStreaming() {
 
 // Stream audio data
 void Esp32Music::DownloadAudioStream(const std::string& music_url) {
-    ESP_LOGD(TAG, "Starting audio stream download from: %s", music_url.c_str());
+    // ESP_LOGD(TAG, "Starting audio stream download from: %s", music_url.c_str()); // DISABLED to protect URL
     
     // Validate URL
     if (music_url.empty() || music_url.find("http") != 0) {
-        ESP_LOGE(TAG, "Invalid URL format: %s", music_url.c_str());
+        // ESP_LOGE(TAG, "Invalid URL format: %s", music_url.c_str()); // DISABLED to protect URL
         is_downloading_ = false;
         return;
     }
     
     auto network = Board::GetInstance().GetNetwork();
-    auto http = network->CreateHttp(0);
+    auto http = network->CreateHttp(30000);  // 30 second timeout for audio streaming
     
     // Set basic request headers
     http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
     http->SetHeader("Accept", "*/*");
+    http->SetHeader("Accept-Encoding", "identity");  // Don't compress audio
     http->SetHeader("Range", "bytes=0-");  // Support range requests
-    http->SetHeader("Connection", "keep-alive");  // Giữ kết nối ổn định
-    http->SetHeader("Cache-Control", "no-cache"); // Tránh cache cũ
+    http->SetHeader("Connection", "keep-alive");  // Keep connection stable
+    http->SetHeader("Cache-Control", "no-cache"); // Avoid stale cache
     
     // Add ESP32 authentication headers
     add_auth_headers(http.get());
@@ -678,24 +1000,41 @@ void Esp32Music::DownloadAudioStream(const std::string& music_url) {
         return;
     }
     
-    ESP_LOGI(TAG, "Started downloading audio stream, status: %d", status_code);
+    // ESP_LOGI(TAG, "Started downloading audio stream, status: %d", status_code);
     
     // Read audio data in chunks
     const size_t chunk_size = 4096;  // 4KB per chunk
     char* buffer = new char[chunk_size];
     size_t total_downloaded = 0;
     size_t total_print_bytes = 0;
+    int read_attempts = 0;
+    int consecutive_zero_reads = 0;
     
     while (is_downloading_ && is_playing_) {
+        read_attempts++;
         int bytes_read = http->Read(buffer, chunk_size);
+        
         if (bytes_read < 0) {
-            ESP_LOGE(TAG, "Failed to read audio data: error code %d", bytes_read);
+            ESP_LOGE(TAG, "Failed to read audio data on attempt %d: error code %d", read_attempts, bytes_read);
             break;
         }
         if (bytes_read == 0) {
-            ESP_LOGI(TAG, "Audio stream download completed, total: %d bytes", total_downloaded);
-            break;
+            consecutive_zero_reads++;
+            if (consecutive_zero_reads <= 3) {
+                ESP_LOGW(TAG, "Read returned 0 bytes (attempt %d, total %d bytes so far)", read_attempts, total_downloaded);
+            }
+            if (total_downloaded == 0 && consecutive_zero_reads > 5) {
+                ESP_LOGE(TAG, "Proxy URL returned 0 bytes after 5 attempts - connection issue or invalid URL");
+                break;
+            }
+            if (consecutive_zero_reads > 3) {
+                ESP_LOGI(TAG, "Audio stream download completed, total: %d bytes", total_downloaded);
+                break;
+            }
+            continue;
         }
+        
+        consecutive_zero_reads = 0;
         
         // Log chunk information
         // ESP_LOGI(TAG, "Downloaded chunk: %d bytes at offset %d", bytes_read, total_downloaded);
@@ -804,18 +1143,28 @@ void Esp32Music::PlayAudioStream() {
         codec->EnableOutput(true);
     }
     
+    // Initialize MP3 decoder if not already initialized
     if (!mp3_decoder_initialized_) {
-        ESP_LOGE(TAG, "MP3 decoder not initialized");
-        is_playing_ = false;
-        return;
+        ESP_LOGI(TAG, "MP3 decoder not initialized, initializing now");
+        if (!InitializeMp3Decoder()) {
+            ESP_LOGE(TAG, "Failed to initialize MP3 decoder during playback");
+            is_playing_ = false;
+            return;
+        }
     }
     
     // Wait for the buffer to have enough data to start playback
     {
         std::unique_lock<std::mutex> lock(buffer_mutex_);
-        buffer_cv_.wait(lock, [this] { 
+        auto timeout = std::chrono::seconds(5);
+        bool has_data = buffer_cv_.wait_for(lock, timeout, [this] { 
             return buffer_size_ >= MIN_BUFFER_SIZE || (!is_downloading_ && !audio_buffer_.empty()); 
         });
+        
+        if (!has_data) {
+            ESP_LOGW(TAG, "Timeout waiting for buffer, buffer_size=%d, is_downloading=%d, buffer_empty=%d", 
+                    buffer_size_, is_downloading_, audio_buffer_.empty());
+        }
     }
     
     ESP_LOGI(TAG, "Starting playback with buffer size: %d", buffer_size_);
@@ -911,8 +1260,14 @@ void Esp32Music::PlayAudioStream() {
                         ESP_LOGI(TAG, "Playback finished, total played: %d bytes", total_played_bytes);
                         break;
                     }
-                    // Wait for new data
-                    buffer_cv_.wait(lock, [this] { return !audio_buffer_.empty() || !is_downloading_; });
+                    // Wait for new data with timeout
+                    auto timeout = std::chrono::milliseconds(500);
+                    bool has_data = buffer_cv_.wait_for(lock, timeout, [this] { 
+                        return !audio_buffer_.empty() || !is_downloading_; 
+                    });
+                    if (!has_data) {
+                        ESP_LOGD(TAG, "Timeout waiting for audio data, will retry");
+                    }
                     if (audio_buffer_.empty()) {
                         continue;
                     }
@@ -1278,50 +1633,55 @@ size_t Esp32Music::SkipId3Tag(uint8_t* data, size_t size) {
 
 // Download lyrics
 bool Esp32Music::DownloadLyrics(const std::string& lyric_url) {
-    ESP_LOGI(TAG, "Downloading lyrics from: %s", lyric_url.c_str());
+    // ESP_LOGI(TAG, "Downloading lyrics from: %s", lyric_url.c_str()); // DISABLED to protect URL
     
     // Check if the URL is empty
     if (lyric_url.empty()) {
-        ESP_LOGE(TAG, "Lyric URL is empty!");
+        // ESP_LOGE(TAG, "Lyric URL is empty!"); // DISABLED to protect URL
         return false;
     }
     
-    // Add retry logic
+    // Add retry logic with exponential backoff
     const int max_retries = 3;
+    const int timeout_ms = 8000;  // 8 second timeout for lyrics
     int retry_count = 0;
     bool success = false;
     std::string lyric_content;
     std::string current_url = lyric_url;
     int redirect_count = 0;
     const int max_redirects = 5;  // Allow up to 5 redirects
+    int backoff_ms = 1000;  // Start with 1 second backoff
     
     while (retry_count < max_retries && !success && redirect_count < max_redirects) {
         if (retry_count > 0) {
-            ESP_LOGI(TAG, "Retrying lyric download (attempt %d of %d)", retry_count + 1, max_retries);
-            // Pause before retrying
-            std::this_thread::sleep_for(std::chrono::milliseconds(500));
+            ESP_LOGI(TAG, "Retrying lyric download (attempt %d of %d, waiting %dms)", 
+                     retry_count + 1, max_retries, backoff_ms);
+            vTaskDelay(pdMS_TO_TICKS(backoff_ms));
+            backoff_ms *= 2;  // Exponential backoff
         }
         
-        // Use the HTTP client provided by the Board
+        // Use the HTTP client provided by the Board with explicit timeout
         auto network = Board::GetInstance().GetNetwork();
-        auto http = network->CreateHttp(0);
+        auto http = network->CreateHttp(timeout_ms);
         if (!http) {
             ESP_LOGE(TAG, "Failed to create HTTP client for lyric download");
             retry_count++;
             continue;
         }
         
-        // Set basic request headers
+        // Set request headers
         http->SetHeader("User-Agent", "ESP32-Music-Player/1.0");
-        http->SetHeader("Accept", "text/plain");
+        http->SetHeader("Accept", "text/plain; charset=utf-8");
+        http->SetHeader("Accept-Encoding", "deflate");
+        http->SetHeader("Connection", "close");
         
         // Add ESP32 authentication headers
         add_auth_headers(http.get());
         
         // Open GET connection
-        ESP_LOGI(TAG, "Xiaozhi Open Source Music Firmware QQ Group: 826072986");
+        ESP_LOGD(TAG, "Opening HTTP connection for lyrics (attempt %d)", retry_count + 1);
         if (!http->Open("GET", current_url)) {
-            ESP_LOGE(TAG, "Failed to open HTTP connection for lyrics");
+            ESP_LOGE(TAG, "Failed to open HTTP connection for lyrics (attempt %d)", retry_count + 1);
             retry_count++;
             continue;
         }
@@ -1339,12 +1699,23 @@ bool Esp32Music::DownloadLyrics(const std::string& lyric_url) {
             continue;
         }
         
-        // Non-200 status codes are treated as errors
+        // Accept 2xx status codes, retry on 5xx/429, fail on 4xx
         if (status_code < 200 || status_code >= 300) {
-            ESP_LOGE(TAG, "HTTP GET failed with status code: %d", status_code);
-            http->Close();
-            retry_count++;
-            continue;
+            if ((status_code >= 500 && status_code < 600) || status_code == 429) {
+                ESP_LOGW(TAG, "Transient HTTP error %d, will retry", status_code);
+                http->Close();
+                retry_count++;
+                continue;
+            } else if (status_code >= 400 && status_code < 500) {
+                ESP_LOGE(TAG, "HTTP GET failed with client error: %d", status_code);
+                http->Close();
+                return false;  // Don't retry 4xx errors
+            } else {
+                ESP_LOGE(TAG, "HTTP GET failed with status code: %d", status_code);
+                http->Close();
+                retry_count++;
+                continue;
+            }
         }
         
         // Read the response
@@ -1544,7 +1915,7 @@ void Esp32Music::UpdateLyricDisplay(int64_t current_time_ms) {
     int new_lyric_index = -1;
     
     // Start searching from the current lyric index to improve efficiency
-    int start_index = (current_lyric_index_.load() >= 0) ? current_lyric_index_.load() : 0;
+    int start_index = (current_lyric_index_ >= 0) ? current_lyric_index_ : 0;
     
     // Forward search: find the last timestamp less than or equal to the current time
     for (int i = start_index; i < (int)lyrics_.size(); i++) {
@@ -1603,7 +1974,7 @@ void Esp32Music::UpdateLyricDisplay(int64_t current_time_ms) {
 
 // Implementation of display mode control methods
 void Esp32Music::SetDisplayMode(DisplayMode mode) {
-    DisplayMode old_mode = display_mode_.load();
+    DisplayMode old_mode = display_mode_;
     display_mode_ = mode;
     
     ESP_LOGI(TAG, "Display mode changed from %s to %s", 
@@ -1615,7 +1986,10 @@ std::string Esp32Music::GetCheckMusicServerUrl() {
     Settings settings("wifi", false);
     std::string url = settings.GetString("music_url");
     if (url.empty()) {
-        url = DEFAULT_MUSIC_URL;
+        // Use primary server from fallback list
+        if (!FALLBACK_MUSIC_URLS.empty()) {
+            url = FALLBACK_MUSIC_URLS[0];
+        }
     }
     return url;
 }

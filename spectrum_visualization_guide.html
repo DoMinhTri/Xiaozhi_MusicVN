@@ -1,0 +1,529 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>5 Kiểu Phổ Nhạc - Music Spectrum Visualization</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #fff;
+            padding: 10px 8px;
+            min-height: 100vh;
+        }
+        
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        
+        h1 {
+            text-align: center;
+            margin-bottom: 2px;
+            font-size: 1.1em;
+            background: linear-gradient(45deg, #00ff00, #00ffff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+        
+        .subtitle {
+            text-align: center;
+            margin-bottom: 8px;
+            color: #aaa;
+            font-size: 0.65em;
+        }
+        
+        .spectrum-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+        }
+        
+        .spectrum-card {
+            background: #0f3460;
+            border: 2px solid #00ff00;
+            border-radius: 10px;
+            overflow: hidden;
+            box-shadow: 0 8px 32px rgba(0, 255, 0, 0.2);
+            transition: transform 0.3s, box-shadow 0.3s;
+            display: flex;
+            flex-direction: column;
+        }
+        
+        .spectrum-card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 12px 48px rgba(0, 255, 0, 0.4);
+        }
+        
+        .spectrum-number {
+            display: inline-block;
+            background: linear-gradient(45deg, #00ff00, #00ffff);
+            color: #000;
+            padding: 5px 10px;
+            font-weight: bold;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 18px;
+            margin: 0;
+        }
+        
+        .spectrum-header {
+            padding: 8px;
+            background: rgba(0, 255, 0, 0.1);
+            border-bottom: 1px solid #00ff00;
+        }
+        
+        .spectrum-title {
+            font-size: 14px;
+            font-weight: bold;
+            margin: 3px 0;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: #00ff00;
+        }
+        
+        .spectrum-description {
+            font-size: 11px;
+            color: #bbb;
+            margin-top: 3px;
+            line-height: 1.3;
+            padding: 4px;
+            background: rgba(0, 255, 0, 0.05);
+            border-left: 2px solid #00ffff;
+            border-radius: 3px;
+        }
+        
+        .spectrum-canvas {
+            width: 100%;
+            height: 140px;
+            background: #000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        svg {
+            width: 100%;
+            height: 100%;
+        }
+        
+        @keyframes barAnimation {
+            0%, 100% { 
+                height: 30px;
+            }
+            25% { 
+                height: 80px;
+            }
+            50% { 
+                height: 120px;
+            }
+            75% { 
+                height: 60px;
+            }
+        }
+        
+        @keyframes spiralRotate {
+            0% {
+                transform: rotate(0deg);
+            }
+            100% {
+                transform: rotate(360deg);
+            }
+        }
+        
+        @keyframes peakFall {
+            0% { opacity: 1; }
+            100% { opacity: 0.3; }
+        }
+        
+        .animated-bar {
+            animation: barAnimation 1.5s ease-in-out infinite;
+        }
+        
+        .spectrum-footer {
+            padding: 6px 8px;
+            background: rgba(0, 0, 0, 0.3);
+            border-top: 1px solid #00ff00;
+            font-size: 10px;
+            color: #999;
+            line-height: 1.3;
+        }
+        
+        .how-it-works {
+            background: rgba(0, 255, 0, 0.05);
+            border-left: 2px solid #00ffff;
+            padding: 5px;
+            margin-top: 3px;
+            border-radius: 3px;
+            font-size: 10px;
+            color: #ccc;
+        }
+        
+        .footer {
+            text-align: center;
+            margin-top: 15px;
+            padding-top: 10px;
+            border-top: 1px solid #00ff00;
+            color: #888;
+            font-size: 10px;
+        }
+        
+        .footer-text {
+            margin: 4px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 5 Kiểu Phổ Nhạc - Music Spectrum Visualization 🎵</h1>
+        <div class="subtitle">Các hiệu ứng phổ nhạc động trên ESP32-S3 với FFT xử lý âm thanh</div>
+        
+        <div class="spectrum-grid">
+            <!-- Kiểu 1: CLASSIC -->
+            <div class="spectrum-card">
+                <div class="spectrum-header">
+                    <div class="spectrum-title">
+                        <span class="spectrum-number">1</span>
+                        <span>CLASSIC (Block)</span>
+                    </div>
+                    <div class="spectrum-description">
+                        Bars cổ điển từ trái sang phải, từ dưới lên trên theo magnitude tần số
+                    </div>
+                </div>
+                <div class="spectrum-canvas">
+                    <svg viewBox="0 0 700 280" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <linearGradient id="grad-neon" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" style="stop-color:#ff0000;stop-opacity:1" />
+                                <stop offset="50%" style="stop-color:#ffff00;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#00ffff;stop-opacity:1" />
+                            </linearGradient>
+                            <filter id="glow-effect">
+                                <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <text x="350" y="25" text-anchor="middle" fill="#00ff00" font-size="18" font-weight="bold">Kiểu 1: CLASSIC - Block bars</text>
+                        
+                        <!-- Animated bars with glow -->
+                        <g filter="url(#glow-effect)">
+                            <rect x="25" y="160" width="16" height="80" fill="url(#grad-neon)" opacity="0.5">
+                                <animate attributeName="height" values="50;120;90;60;50" dur="2s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="190;110;135;160;190" dur="2s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="25" y="160" width="12" height="80" fill="url(#grad-neon)">
+                                <animate attributeName="height" values="50;120;90;60;50" dur="2s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="190;110;135;160;190" dur="2s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="25" y="160" width="12" height="8" fill="#ffff00">
+                                <animate attributeName="y" values="160;70;95;120;160" dur="2s" repeatCount="indefinite"/>
+                            </rect>
+                        </g>
+                        
+                        <g filter="url(#glow-effect)">
+                            <rect x="55" y="140" width="16" height="100" fill="url(#grad-neon)" opacity="0.5">
+                                <animate attributeName="height" values="80;140;110;75;80" dur="2.2s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="160;60;90;145;160" dur="2.2s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="55" y="140" width="12" height="100" fill="url(#grad-neon)">
+                                <animate attributeName="height" values="80;140;110;75;80" dur="2.2s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="160;60;90;145;160" dur="2.2s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="55" y="140" width="12" height="8" fill="#ffff00">
+                                <animate attributeName="y" values="140;40;70;125;140" dur="2.2s" repeatCount="indefinite"/>
+                            </rect>
+                        </g>
+                        
+                        <g filter="url(#glow-effect)">
+                            <rect x="85" y="130" width="16" height="110" fill="url(#grad-neon)" opacity="0.5">
+                                <animate attributeName="height" values="100;130;95;85;100" dur="2.4s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="150;50;95;125;150" dur="2.4s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="85" y="130" width="12" height="110" fill="url(#grad-neon)">
+                                <animate attributeName="height" values="100;130;95;85;100" dur="2.4s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="150;50;95;125;150" dur="2.4s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="85" y="130" width="12" height="8" fill="#ffff00">
+                                <animate attributeName="y" values="130;30;75;105;130" dur="2.4s" repeatCount="indefinite"/>
+                            </rect>
+                        </g>
+                        
+                        <g filter="url(#glow-effect)">
+                            <rect x="115" y="120" width="16" height="120" fill="url(#grad-neon)" opacity="0.5">
+                                <animate attributeName="height" values="110;120;100;90;110" dur="2.1s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="140;40;90;120;140" dur="2.1s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="115" y="120" width="12" height="120" fill="url(#grad-neon)">
+                                <animate attributeName="height" values="110;120;100;90;110" dur="2.1s" repeatCount="indefinite"/>
+                                <animate attributeName="y" values="140;40;90;120;140" dur="2.1s" repeatCount="indefinite"/>
+                            </rect>
+                            <rect x="115" y="120" width="12" height="8" fill="#ffff00">
+                                <animate attributeName="y" values="120;20;70;100;120" dur="2.1s" repeatCount="indefinite"/>
+                            </rect>
+                        </g>
+                    </svg>
+                </div>
+                <div class="spectrum-footer">
+                    <strong>Đặc điểm:</strong> Bars đơn giản từ trái sang phải, dễ thấy
+                    <div class="how-it-works">
+                        <strong>Cách hoạt động:</strong> Vẽ bars từ dưới lên từ trái sang phải. Bar thứ i có chiều cao = magnitude[i]. Dùng gradient màu từ đỏ → vàng → xanh.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kiểu 2: WAVE -->
+            <div class="spectrum-card">
+                <div class="spectrum-header">
+                    <div class="spectrum-title">
+                        <span class="spectrum-number">2</span>
+                        <span>WAVE (Sóng)</span>
+                    </div>
+                    <div class="spectrum-description">
+                        Sóng từ giữa ra hai bên, màu neon xanh da trời - xanh lá - vàng xanh
+                    </div>
+                </div>
+                <div class="spectrum-canvas">
+                    <svg viewBox="0 0 280 280" preserveAspectRatio="xMidYMid meet">
+                        <text x="140" y="20" text-anchor="middle" fill="#00ff00" font-size="16" font-weight="bold">Kiểu 2: WAVE - Sóng từ tâm</text>
+                        
+                        <!-- Left side waves -->
+                        <rect x="40" y="120" width="8" height="50" fill="#ff6600">
+                            <animate attributeName="height" values="30;80;50;30" dur="1.5s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="145;100;125;145" dur="1.5s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="55" y="110" width="8" height="60" fill="#ff5500">
+                            <animate attributeName="height" values="50;100;70;50" dur="1.7s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="135;90;115;135" dur="1.7s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="70" y="100" width="8" height="70" fill="#ff4400">
+                            <animate attributeName="height" values="70;120;85;70" dur="1.9s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="125;80;105;125" dur="1.9s" repeatCount="indefinite"/>
+                        </rect>
+                        
+                        <!-- Center -->
+                        <circle cx="140" cy="140" r="6" fill="#00ff00"/>
+                        
+                        <!-- Right side waves (mirrored) -->
+                        <rect x="170" y="100" width="8" height="70" fill="#ff4400">
+                            <animate attributeName="height" values="70;120;85;70" dur="1.9s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="125;80;105;125" dur="1.9s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="185" y="110" width="8" height="60" fill="#ff5500">
+                            <animate attributeName="height" values="50;100;70;50" dur="1.7s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="135;90;115;135" dur="1.7s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="200" y="120" width="8" height="50" fill="#ff6600">
+                            <animate attributeName="height" values="30;80;50;30" dur="1.5s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="145;100;125;145" dur="1.5s" repeatCount="indefinite"/>
+                        </rect>
+                    </svg>
+                </div>
+                <div class="spectrum-footer">
+                    <strong>Đặc điểm:</strong> Bars đối xứng từ tâm, gradient xanh da trời → xanh lá → vàng xanh
+                    <div class="how-it-works">
+                        <strong>Cách hoạt động:</strong> Vẽ 2 nhóm bars đối xứng từ giữa màn hình. Bars bên trái từ trái vào giữa, bars bên phải từ giữa ra phải. Màu neon xanh-xanh lá-vàng (khác CLASSIC).
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kiểu 3: CIRCULAR -->
+            <div class="spectrum-card">
+                <div class="spectrum-header">
+                    <div class="spectrum-title">
+                        <span class="spectrum-number">3</span>
+                        <span>CIRCULAR (Tròn)</span>
+                    </div>
+                    <div class="spectrum-description">
+                        Radial bars xoay quanh tâm tím, tạo hình tròn hoàn chỉnh
+                    </div>
+                </div>
+                <div class="spectrum-canvas">
+                    <svg viewBox="0 0 280 280" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <style>
+                                @keyframes rotate2 {
+                                    from { transform: rotate(0deg); }
+                                    to { transform: rotate(-360deg); }
+                                }
+                                .circular-group {
+                                    animation: rotate2 4s linear infinite;
+                                    transform-origin: 140px 140px;
+                                }
+                            </style>
+                        </defs>
+                        <text x="140" y="20" text-anchor="middle" fill="#00ff00" font-size="16" font-weight="bold">Kiểu 3: CIRCULAR - Hình tròn</text>
+                        
+                        <!-- Center circle -->
+                        <circle cx="140" cy="140" r="20" fill="#a200ff"/>
+                        
+                        <!-- Rotating circular bars -->
+                        <g class="circular-group">
+                            <line x1="140" y1="140" x2="140" y2="45" stroke="#ff0066" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="185" y2="65" stroke="#ff3366" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="210" y2="105" stroke="#ff6600" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="220" y2="150" stroke="#ffcc00" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="200" y2="190" stroke="#00ff99" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="140" y2="235" stroke="#00ffff" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="80" y2="190" stroke="#0099ff" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="60" y2="150" stroke="#6600ff" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="70" y2="105" stroke="#cc00ff" stroke-width="4" stroke-linecap="round"/>
+                            <line x1="140" y1="140" x2="95" y2="65" stroke="#ff00ff" stroke-width="4" stroke-linecap="round"/>
+                        </g>
+                    </svg>
+                </div>
+                <div class="spectrum-footer">
+                    <strong>Đặc điểm:</strong> Bars radial quanh tâm tím, xoay ngược chiều kim đồng hồ
+                    <div class="how-it-works">
+                        <strong>Cách hoạt động:</strong> Tương tự SPIRAL nhưng bars độ dài cố định hoặc thay đổi từ từ. Tâm là hình tròn tím 15-20px, bars vẽ xung quanh theo 40 tần số.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kiểu 4: MIRROR -->
+            <div class="spectrum-card">
+                <div class="spectrum-header">
+                    <div class="spectrum-title">
+                        <span class="spectrum-number">4</span>
+                        <span>MIRROR (Gương)</span>
+                    </div>
+                    <div class="spectrum-description">
+                        Histogram bars từ dưới lên, màu neon hồng - đỏ tía - xanh tím
+                    </div>
+                </div>
+                <div class="spectrum-canvas">
+                    <svg viewBox="0 0 700 280" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <linearGradient id="grad-mirror" x1="0%" y1="0%" x2="100%" y2="0%">
+                                <stop offset="0%" style="stop-color:#0066ff;stop-opacity:1" />
+                                <stop offset="50%" style="stop-color:#00ff00;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#ffff00;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <text x="350" y="25" text-anchor="middle" fill="#00ff00" font-size="18" font-weight="bold">Kiểu 4: MIRROR - Gương đối xứng</text>
+                        
+                        <!-- Animated bars (bottom part) -->
+                        <rect x="30" y="170" width="12" height="60" fill="url(#grad-mirror)">
+                            <animate attributeName="height" values="40;100;70;50;40" dur="2s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="190;110;150;170;190" dur="2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="50" y="160" width="12" height="70" fill="url(#grad-mirror)">
+                            <animate attributeName="height" values="60;120;80;65;60" dur="2.2s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="180;100;140;165;180" dur="2.2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="70" y="150" width="12" height="80" fill="url(#grad-mirror)">
+                            <animate attributeName="height" values="80;130;90;75;80" dur="2.4s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="170;80;130;155;170" dur="2.4s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="90" y="145" width="12" height="85" fill="url(#grad-mirror)">
+                            <animate attributeName="height" values="90;140;95;80;90" dur="2.1s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="165;70;125;150;165" dur="2.1s" repeatCount="indefinite"/>
+                        </rect>
+                        
+                        <!-- Color reference bar at bottom -->
+                        <rect x="30" y="240" width="75" height="20" fill="url(#grad-mirror)" stroke="#00ff00" stroke-width="1"/>
+                        <text x="110" y="253" fill="#999" font-size="12">Color Reference</text>
+                    </svg>
+                </div>
+                <div class="spectrum-footer">
+                    <strong>Đặc điểm:</strong> Bars từ dưới lên từ trái sang phải, gradient hồng → tía → xanh tím
+                    <div class="how-it-works">
+                        <strong>Cách hoạt động:</strong> Vẽ bars từ y_bottom (chuẩn) lên trên với height = magnitude. Màu neon hồng-tía-xanh tím (khác CLASSIC và WAVE), có color reference bar dưới cùng.
+                    </div>
+                </div>
+            </div>
+            
+            <!-- Kiểu 5: EQUALIZER -->
+            <div class="spectrum-card">
+                <div class="spectrum-header">
+                    <div class="spectrum-title">
+                        <span class="spectrum-number">5</span>
+                        <span>EQUALIZER (Cân bằng)</span>
+                    </div>
+                    <div class="spectrum-description">
+                        Bars lên xuống từ giữa, tạo hiệu ứng equalizer âm thanh cân bằng
+                    </div>
+                </div>
+                <div class="spectrum-canvas">
+                    <svg viewBox="0 0 700 280" preserveAspectRatio="xMidYMid meet">
+                        <defs>
+                            <linearGradient id="grad-eq-up" x1="0%" y1="100%" x2="0%" y2="0%">
+                                <stop offset="0%" style="stop-color:#00aaff;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#00ffff;stop-opacity:1" />
+                            </linearGradient>
+                            <linearGradient id="grad-eq-down" x1="0%" y1="0%" x2="0%" y2="100%">
+                                <stop offset="0%" style="stop-color:#ff00aa;stop-opacity:1" />
+                                <stop offset="100%" style="stop-color:#ff0055;stop-opacity:1" />
+                            </linearGradient>
+                        </defs>
+                        <text x="350" y="25" text-anchor="middle" fill="#00ff00" font-size="18" font-weight="bold">Kiểu 5: EQUALIZER - Cân bằng từ tâm</text>
+                        
+                        <!-- Center line -->
+                        <line x1="20" y1="140" x2="680" y2="140" stroke="#00ff00" stroke-width="1" opacity="0.3" stroke-dasharray="5,5"/>
+                        
+                        <!-- Top bars (blue/cyan) -->
+                        <rect x="30" y="60" width="12" height="80" fill="url(#grad-eq-up)">
+                            <animate attributeName="height" values="50;120;80;60;50" dur="2s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="130;60;100;120;130" dur="2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="50" y="40" width="12" height="100" fill="url(#grad-eq-up)">
+                            <animate attributeName="height" values="80;140;110;75;80" dur="2.2s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="130;40;80;125;130" dur="2.2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="70" y="30" width="12" height="110" fill="url(#grad-eq-up)">
+                            <animate attributeName="height" values="100;130;95;85;100" dur="2.4s" repeatCount="indefinite"/>
+                            <animate attributeName="y" values="130;50;95;125;130" dur="2.4s" repeatCount="indefinite"/>
+                        </rect>
+                        
+                        <!-- Bottom bars (pink/red) -->
+                        <rect x="30" y="140" width="12" height="80" fill="url(#grad-eq-down)">
+                            <animate attributeName="height" values="50;120;80;60;50" dur="2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="50" y="140" width="12" height="100" fill="url(#grad-eq-down)">
+                            <animate attributeName="height" values="80;140;110;75;80" dur="2.2s" repeatCount="indefinite"/>
+                        </rect>
+                        <rect x="70" y="140" width="12" height="110" fill="url(#grad-eq-down)">
+                            <animate attributeName="height" values="100;130;95;85;100" dur="2.4s" repeatCount="indefinite"/>
+                        </rect>
+                    </svg>
+                </div>
+                <div class="spectrum-footer">
+                    <strong>Đặc điểm:</strong> Bars lên xuống từ đường tâm, tạo hiệu ứng equalizer cân bằng
+                    <div class="how-it-works">
+                        <strong>Cách hoạt động:</strong> Vẽ 2 nhóm bars từ đường tâm - nhóm trên vẽ lên trên (xanh dương), nhóm dưới vẽ xuống dưới (hồng). Bars đối xứng theo magnitude tần số.
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="footer">
+            <div class="footer-text">
+                <strong>💡 5 Kiểu Phổ Nhạc cho ESP32-S3 Music Visualization Project</strong>
+            </div>
+            <div class="footer-text">
+                Được triển khai trên LCD LVGL 9.x với FFT 512-point (40 bars), xử lý âm thanh MP3/Opus
+            </div>
+            <div class="footer-text">
+                🎵 Mỗi kiểu có đặc điểm độc lập - chuyển đổi tự động hoặc thủ công qua app
+            </div>
+        </div>
+    </div>
+</body>
+</html>

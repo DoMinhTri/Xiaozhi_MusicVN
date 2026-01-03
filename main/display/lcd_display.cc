@@ -12,6 +12,7 @@
 #include <esp_err.h>
 #include <esp_lvgl_port.h>
 #include <esp_psram.h>
+#include <esp_random.h>
 #include <string>
 #include <cstdint>
 #include <ctime>
@@ -1371,6 +1372,9 @@ void LcdDisplay::StartFFT() {
     
     vTaskDelay(pdMS_TO_TICKS(500));
 
+    // Randomize spectrum type when starting FFT
+    randomize_spectrum_type();
+
     // Create a periodic update task
     fft_task_should_stop = false;  // Reset the stop flag
     xTaskCreatePinnedToCore(
@@ -1944,12 +1948,105 @@ void LcdDisplay::create_canvas(int32_t status_bar_height) {
     ESP_LOGI(TAG, "canvas created successfully");  
 }
 
+// ============================================================
+// SPECTRUM VISUALIZATION CONTROL
+// ============================================================
+// 5 Spectrum types available:
+// - CLASSIC (0): Block-style bars (traditional equalizer)
+// - WAVE (1): Smooth sine wave visualization
+// - CIRCULAR (2): Radial/radar-style spectrum display
+// - MIRROR (3): Mirrored bars from center (top and bottom)
+// - EQUALIZER (4): Filled bars with gradient effect
+//
+// Usage:
+//   randomize_spectrum_type()  - Randomly switch to any type
+//   set_spectrum_type(type)    - Switch to specific type
+// ============================================================
+
+// Helper function to draw spectrum type name at the top center
+static void draw_spectrum_name(uint16_t* canvas_buf, int canvas_w, int canvas_h, const char* name) {
+    if (canvas_buf == nullptr || name == nullptr) return;
+    
+    // Calculate approximate text dimensions (rough estimate)
+    int name_len = strlen(name);
+    int char_width = 6;  // pixels per character (approximate)
+    int text_width = name_len * char_width;
+    int x_start = (canvas_w - text_width) / 2;
+    int y_start = 5;  // pixels from top
+    
+    // RGB565 color values
+    uint16_t bg_color = 0x0000;    // Black background
+    uint16_t border_color = 0x07E0;  // Green border for visibility
+    
+    // Draw background rectangle behind text
+    int bg_padding = 4;
+    for (int y = y_start - bg_padding; y < y_start + 12 + bg_padding && y < canvas_h; y++) {
+        if (y < 0) continue;
+        for (int x = x_start - bg_padding; x < x_start + text_width + bg_padding && x < canvas_w; x++) {
+            if (x < 0) continue;
+            canvas_buf[y * canvas_w + x] = bg_color;
+        }
+    }
+    
+    // Draw border around text for visibility
+    for (int x = x_start - bg_padding; x <= x_start + text_width + bg_padding && x < canvas_w; x++) {
+        if (x >= 0) {
+            if (y_start - bg_padding >= 0 && y_start - bg_padding < canvas_h) {
+                canvas_buf[(y_start - bg_padding) * canvas_w + x] = border_color;
+            }
+            if (y_start + 12 + bg_padding < canvas_h) {
+                canvas_buf[(y_start + 12 + bg_padding) * canvas_w + x] = border_color;
+            }
+        }
+    }
+    
+    // Log the spectrum type name for debugging
+    // ESP_LOGI("LcdDisplay", "Spectrum Type: %s", name);
+}
+
 void LcdDisplay::drawSpectrumIfReady() {
     if (fft_data_ready) {
-        draw_spectrum(avg_power_spectrum, LCD_FFT_SIZE/2);
+        // Call appropriate spectrum drawing function based on current type
+        switch (current_spectrum_type_) {
+            case SpectrumType::WAVE:
+                draw_spectrum_wave(avg_power_spectrum, LCD_FFT_SIZE/2);
+                break;
+            case SpectrumType::CIRCULAR:
+                draw_spectrum_circular(avg_power_spectrum, LCD_FFT_SIZE/2);
+                break;
+            case SpectrumType::MIRROR:
+                draw_spectrum_mirror(avg_power_spectrum, LCD_FFT_SIZE/2);
+                break;
+            case SpectrumType::EQUALIZER:
+                draw_spectrum_equalizer(avg_power_spectrum, LCD_FFT_SIZE/2);
+                break;
+            case SpectrumType::CLASSIC:
+            default:
+                draw_spectrum(avg_power_spectrum, LCD_FFT_SIZE/2);
+                break;
+        }
         fft_data_ready = false;
     }
 }
+
+void LcdDisplay::randomize_spectrum_type() {
+    // Sequential select from 5 spectrum types (0-4) in order, then loop back
+    // Called automatically when StartFFT() is invoked
+    static int spectrum_type_counter = 0;
+    
+    int next_type = spectrum_type_counter % 5;
+    spectrum_type_counter++;
+    
+    set_spectrum_type(static_cast<SpectrumType>(next_type));
+    ESP_LOGI(TAG, "Sequential spectrum type to: %d (CLASSIC=0, WAVE=1, CIRCULAR=2, MIRROR=3, EQUALIZER=4)", next_type);
+}
+
+void LcdDisplay::set_spectrum_type(SpectrumType type) {
+    // Manually set spectrum type
+    current_spectrum_type_ = type;
+    ESP_LOGI(TAG, "Spectrum type set to: %d", static_cast<int>(type));
+}
+
 
 void LcdDisplay::draw_spectrum(float *power_spectrum,int fft_size){
     const int bartotal=BAR_COL_NUM;
@@ -1960,6 +2057,7 @@ void LcdDisplay::draw_spectrum(float *power_spectrum,int fft_size){
     int y_pos = (canvas_height_) - 1;
 
     float magnitude[bartotal]={0};
+    float magnitude_original[bartotal]={0};  // Keep original magnitude for amplitude bar
     float max_magnitude=0;
 
     const float MIN_DB = -25.0f;
@@ -1977,7 +2075,8 @@ void LcdDisplay::draw_spectrum(float *power_spectrum,int fft_size){
         if(count>0){
             magnitude[bin] /= count;
         }
-      
+        
+        magnitude_original[bin] = magnitude[bin];  // Save original value
 
         if (magnitude[bin] > max_magnitude) max_magnitude = magnitude[bin];
     }
@@ -2002,6 +2101,12 @@ void LcdDisplay::draw_spectrum(float *power_spectrum,int fft_size){
 
     std::fill_n(canvas_buffer_, canvas_width_ * canvas_height_, COLOR_BLACK);
     
+    // Draw spectrum type name at top center
+    draw_spectrum_name(canvas_buffer_, canvas_width_, canvas_height_, "CLASSIC");
+    
+    // Draw amplitude bar at the top using original magnitude values
+    draw_amplitude_bar(magnitude_original, bartotal, 25);  // 25 pixels height for amplitude bar
+    
     // Skip the DC component (k=0)
     for (int k = 1; k < bartotal; k++) {
         x_pos=canvas_width_/bartotal*(k-1);
@@ -2016,6 +2121,452 @@ void LcdDisplay::draw_spectrum(float *power_spectrum,int fft_size){
 
 }
 
+// ============================================================
+// KIỂU 1: SÓN HÌNH SIN - Wave Spectrum
+// ============================================================
+void LcdDisplay::draw_spectrum_wave(float *power_spectrum, int fft_size) {
+    const int bartotal = BAR_COL_NUM;
+    const int bar_max_height = bar_max_hight_;
+    
+    float magnitude[bartotal] = {0};
+    float max_magnitude = 0;
+    const float MIN_DB = -25.0f;
+    const float MAX_DB = 0.0f;
+    
+    // Calculate magnitude for each bar
+    for (int bin = 0; bin < bartotal; bin++) {
+        int start = bin * (fft_size / bartotal);
+        int end = (bin + 1) * (fft_size / bartotal);
+        magnitude[bin] = 0;
+        int count = 0;
+        for (int k = start; k < end; k++) {
+            magnitude[bin] += sqrt(power_spectrum[k]);
+            count++;
+        }
+        if (count > 0) {
+            magnitude[bin] /= count;
+        }
+        if (magnitude[bin] > max_magnitude) max_magnitude = magnitude[bin];
+    }
+    
+    // Apply smoothing
+    magnitude[1] = magnitude[1] * 0.6;
+    magnitude[2] = magnitude[2] * 0.7;
+    magnitude[3] = magnitude[3] * 0.8;
+    magnitude[4] = magnitude[4] * 0.8;
+    magnitude[5] = magnitude[5] * 0.9;
+    
+    // Convert to dB
+    for (int bin = 1; bin < bartotal; bin++) {
+        if (magnitude[bin] > 0.0f && max_magnitude > 0.0f) {
+            magnitude[bin] = 20.0f * log10f(magnitude[bin] / max_magnitude + 1e-10);
+        } else {
+            magnitude[bin] = MIN_DB;
+        }
+    }
+    
+    std::fill_n(canvas_buffer_, canvas_width_ * canvas_height_, COLOR_BLACK);
+    
+    // Draw spectrum type name at top center
+    draw_spectrum_name(canvas_buffer_, canvas_width_, canvas_height_, "WAVE");
+    
+    int center_x = canvas_width_ / 2;
+    int center_y = canvas_height_ / 2;
+    
+    // Draw smooth wave lines from center outward to both sides
+    for (int bin = 0; bin < bartotal; bin++) {
+        // Calculate magnitude for this bin
+        float mag = (magnitude[bin] - MIN_DB) / (MAX_DB - MIN_DB);
+        mag = std::max(0.0f, std::min(1.0f, mag));
+        
+        int wave_height = static_cast<int>(mag * bar_max_height);
+        uint16_t color = get_bar_color(bin);
+        
+        // Calculate x position: from center, left side and right side symmetric
+        int x_offset = (bin * canvas_width_) / (2 * bartotal);  // Distance from center
+        
+        // Draw on right side (center to right)
+        int right_x = center_x + x_offset;
+        if (right_x >= 0 && right_x < canvas_width_) {
+            for (int y = center_y - wave_height; y <= center_y + wave_height; y++) {
+                if (y >= 0 && y < canvas_height_) {
+                    int idx = y * canvas_width_ + right_x;
+                    if (idx >= 0 && idx < canvas_width_ * canvas_height_) {
+                        canvas_buffer_[idx] = color;
+                    }
+                }
+            }
+        }
+        
+        // Draw on left side (center to left) - mirrored
+        int left_x = center_x - x_offset;
+        if (left_x >= 0 && left_x < canvas_width_) {
+            for (int y = center_y - wave_height; y <= center_y + wave_height; y++) {
+                if (y >= 0 && y < canvas_height_) {
+                    int idx = y * canvas_width_ + left_x;
+                    if (idx >= 0 && idx < canvas_width_ * canvas_height_) {
+                        canvas_buffer_[idx] = color;
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// KIỂU 2: SPECTRUM TRÒN XỀ - Circular Spectrum
+// ============================================================
+void LcdDisplay::draw_spectrum_circular(float *power_spectrum, int fft_size) {
+    const int bartotal = BAR_COL_NUM;
+    //const int bar_max_height = bar_max_hight_;
+    
+    float magnitude[bartotal] = {0};
+    float max_magnitude = 0;
+    const float MIN_DB = -25.0f;
+    const float MAX_DB = 0.0f;
+    
+    // Calculate magnitude for each bar
+    for (int bin = 0; bin < bartotal; bin++) {
+        int start = bin * (fft_size / bartotal);
+        int end = (bin + 1) * (fft_size / bartotal);
+        magnitude[bin] = 0;
+        int count = 0;
+        for (int k = start; k < end; k++) {
+            magnitude[bin] += sqrt(power_spectrum[k]);
+            count++;
+        }
+        if (count > 0) {
+            magnitude[bin] /= count;
+        }
+        if (magnitude[bin] > max_magnitude) max_magnitude = magnitude[bin];
+    }
+    
+    // Apply smoothing
+    for (int i = 1; i <= 5 && i < bartotal; i++) {
+        magnitude[i] *= (0.6f + i * 0.08f);
+    }
+    
+    // Convert to dB
+    for (int bin = 1; bin < bartotal; bin++) {
+        if (magnitude[bin] > 0.0f && max_magnitude > 0.0f) {
+            magnitude[bin] = 20.0f * log10f(magnitude[bin] / max_magnitude + 1e-10);
+        } else {
+            magnitude[bin] = MIN_DB;
+        }
+    }
+    
+    std::fill_n(canvas_buffer_, canvas_width_ * canvas_height_, COLOR_BLACK);
+    
+    // Draw spectrum type name at top center
+    draw_spectrum_name(canvas_buffer_, canvas_width_, canvas_height_, "CIRCULAR");
+    
+    // Draw circular spectrum (like a radar)
+    int center_x = canvas_width_ / 2;
+    int center_y = canvas_height_ / 2;
+    int radius = std::min(canvas_width_, canvas_height_) / 8;  // Smaller circle
+    int max_bar_length = std::min(canvas_width_, canvas_height_) / 2;  // Longer bars
+    
+    for (int bin = 0; bin < bartotal; bin++) {
+        float angle = (2.0f * M_PI * bin) / bartotal;
+        float mag = (magnitude[bin] - MIN_DB) / (MAX_DB - MIN_DB);
+        mag = std::max(0.0f, std::min(1.0f, mag));
+        
+        int bar_length = static_cast<int>(mag * max_bar_length);
+        uint16_t color = get_bar_color(bin);
+        
+        // Draw radial bar from center
+        float start_x = center_x + radius * cos(angle);
+        float start_y = center_y + radius * sin(angle);
+        float end_x = center_x + (radius + bar_length) * cos(angle);
+        float end_y = center_y + (radius + bar_length) * sin(angle);
+        
+        // Bresenham line drawing
+        int x0 = static_cast<int>(start_x);
+        int y0 = static_cast<int>(start_y);
+        int x1 = static_cast<int>(end_x);
+        int y1 = static_cast<int>(end_y);
+        
+        int dx = abs(x1 - x0);
+        int dy = abs(y1 - y0);
+        int sx = (x0 < x1) ? 1 : -1;
+        int sy = (y0 < y1) ? 1 : -1;
+        int err = dx - dy;
+        
+        while (true) {
+            if (x0 >= 0 && x0 < canvas_width_ && y0 >= 0 && y0 < canvas_height_) {
+                canvas_buffer_[y0 * canvas_width_ + x0] = color;
+            }
+            
+            if (x0 == x1 && y0 == y1) break;
+            int e2 = 2 * err;
+            if (e2 > -dy) {
+                err -= dy;
+                x0 += sx;
+            }
+            if (e2 < dx) {
+                err += dx;
+                y0 += sy;
+            }
+        }
+    }
+    
+    // Draw filled circle in the middle with purple color
+    uint16_t purple_color = 0xA01F;  // RGB565: Purple (R=10100, G=00000, B=11111)
+    int circle_radius = radius / 2;  // Half of the inner circle radius
+    
+    for (int y = center_y - circle_radius; y <= center_y + circle_radius; y++) {
+        if (y < 0 || y >= canvas_height_) continue;
+        
+        for (int x = center_x - circle_radius; x <= center_x + circle_radius; x++) {
+            if (x < 0 || x >= canvas_width_) continue;
+            
+            // Check if point is inside circle
+            int dx = x - center_x;
+            int dy = y - center_y;
+            if (dx * dx + dy * dy <= circle_radius * circle_radius) {
+                canvas_buffer_[y * canvas_width_ + x] = purple_color;
+            }
+        }
+    }
+}
+
+// ============================================================
+// KIỂU 3: SPECTRUM GƯ ƠNG ĐỐI XỨNG - Mirror Spectrum
+// ============================================================
+void LcdDisplay::draw_spectrum_mirror(float *power_spectrum, int fft_size) {
+    const int bartotal = BAR_COL_NUM;
+    const int bar_max_height = bar_max_hight_;
+    const int bar_width = canvas_width_ / bartotal;
+    
+    float magnitude[bartotal] = {0};
+    float max_magnitude = 0;
+    const float MIN_DB = -25.0f;
+    const float MAX_DB = 0.0f;
+    
+    // Calculate magnitude for each bar
+    for (int bin = 0; bin < bartotal; bin++) {
+        int start = bin * (fft_size / bartotal);
+        int end = (bin + 1) * (fft_size / bartotal);
+        magnitude[bin] = 0;
+        int count = 0;
+        for (int k = start; k < end; k++) {
+            magnitude[bin] += sqrt(power_spectrum[k]);
+            count++;
+        }
+        if (count > 0) {
+            magnitude[bin] /= count;
+        }
+        if (magnitude[bin] > max_magnitude) max_magnitude = magnitude[bin];
+    }
+    
+    // Apply smoothing
+    magnitude[1] = magnitude[1] * 0.6;
+    magnitude[2] = magnitude[2] * 0.7;
+    magnitude[3] = magnitude[3] * 0.8;
+    magnitude[4] = magnitude[4] * 0.8;
+    magnitude[5] = magnitude[5] * 0.9;
+    
+    // Convert to dB
+    for (int bin = 1; bin < bartotal; bin++) {
+        if (magnitude[bin] > 0.0f && max_magnitude > 0.0f) {
+            magnitude[bin] = 20.0f * log10f(magnitude[bin] / max_magnitude + 1e-10);
+        } else {
+            magnitude[bin] = MIN_DB;
+        }
+    }
+    
+    std::fill_n(canvas_buffer_, canvas_width_ * canvas_height_, COLOR_BLACK);
+    
+    // Draw spectrum type name at top center
+    draw_spectrum_name(canvas_buffer_, canvas_width_, canvas_height_, "MIRROR");
+    
+    int center_x = canvas_width_ / 2;
+    
+    // Draw bars mirrored from center (left and right) - bars push up from bottom like histogram
+    for (int k = 1; k < bartotal; k++) {
+        int x_offset = (bar_width * (k - 1)) / 2;
+        float mag = (magnitude[k] - MIN_DB) / (MAX_DB - MIN_DB);
+        mag = std::max(0.0f, std::min(1.0f, mag));
+        int bar_height = static_cast<int>(mag * bar_max_height);
+        uint16_t color = get_bar_color(k);
+        
+        // Draw left bar (from bottom pushing up)
+        int left_x_pos = center_x - x_offset - bar_width;
+        if (left_x_pos >= 0) {
+            int y_start = canvas_height_ - bar_height;
+            int y_end = canvas_height_;
+            
+            for (int y = y_start; y < y_end && y < canvas_height_; y++) {
+                if (y >= 0) {
+                    for (int x = left_x_pos; x < left_x_pos + bar_width && x < canvas_width_; x++) {
+                        if (x >= 0) {
+                            canvas_buffer_[y * canvas_width_ + x] = color;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Draw right bar (from bottom pushing up) - mirrored
+        int right_x_pos = center_x + x_offset;
+        if (right_x_pos + bar_width <= canvas_width_) {
+            int y_start = canvas_height_ - bar_height;
+            int y_end = canvas_height_;
+            
+            for (int y = y_start; y < y_end && y < canvas_height_; y++) {
+                if (y >= 0) {
+                    for (int x = right_x_pos; x < right_x_pos + bar_width && x < canvas_width_; x++) {
+                        canvas_buffer_[y * canvas_width_ + x] = color;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Draw color bar at bottom showing the spectrum gradient - matching bar colors
+    int color_bar_height = 8;  // Height of color bar
+    int color_bar_y_start = canvas_height_ - color_bar_height;
+    
+    // Draw color bar using same logic as bars (mirrored left and right)
+    for (int k = 1; k < bartotal; k++) {
+        int x_offset = (bar_width * (k - 1)) / 2;
+        uint16_t color = get_bar_color(k);
+        
+        // Draw left side of color bar
+        int left_x_pos = center_x - x_offset - bar_width;
+        if (left_x_pos >= 0) {
+            for (int x = left_x_pos; x < left_x_pos + bar_width && x < canvas_width_; x++) {
+                if (x >= 0) {
+                    for (int y = color_bar_y_start; y < canvas_height_; y++) {
+                        canvas_buffer_[y * canvas_width_ + x] = color;
+                    }
+                }
+            }
+        }
+        
+        // Draw right side of color bar
+        int right_x_pos = center_x + x_offset;
+        if (right_x_pos + bar_width <= canvas_width_) {
+            for (int x = right_x_pos; x < right_x_pos + bar_width && x < canvas_width_; x++) {
+                for (int y = color_bar_y_start; y < canvas_height_; y++) {
+                    canvas_buffer_[y * canvas_width_ + x] = color;
+                }
+            }
+        }
+    }
+}
+
+// ============================================================
+// KIỂU 4: SPECTRUM EQUALIZER - Equalizer Style
+// ============================================================
+void LcdDisplay::draw_spectrum_equalizer(float *power_spectrum, int fft_size) {
+    const int bartotal = BAR_COL_NUM;
+    //const int bar_max_height = bar_max_hight_;
+    const int bar_width = canvas_width_ / bartotal;
+    
+    float magnitude[bartotal] = {0};
+    float max_magnitude = 0;
+    const float MIN_DB = -25.0f;
+    const float MAX_DB = 0.0f;
+    
+    // Calculate magnitude for each bar
+    for (int bin = 0; bin < bartotal; bin++) {
+        int start = bin * (fft_size / bartotal);
+        int end = (bin + 1) * (fft_size / bartotal);
+        magnitude[bin] = 0;
+        int count = 0;
+        for (int k = start; k < end; k++) {
+            magnitude[bin] += sqrt(power_spectrum[k]);
+            count++;
+        }
+        if (count > 0) {
+            magnitude[bin] /= count;
+        }
+        if (magnitude[bin] > max_magnitude) max_magnitude = magnitude[bin];
+    }
+    
+    // Apply smoothing
+    magnitude[1] = magnitude[1] * 0.6;
+    magnitude[2] = magnitude[2] * 0.7;
+    magnitude[3] = magnitude[3] * 0.8;
+    magnitude[4] = magnitude[4] * 0.8;
+    magnitude[5] = magnitude[5] * 0.9;
+    
+    // Convert to dB
+    for (int bin = 1; bin < bartotal; bin++) {
+        if (magnitude[bin] > 0.0f && max_magnitude > 0.0f) {
+            magnitude[bin] = 20.0f * log10f(magnitude[bin] / max_magnitude + 1e-10);
+        } else {
+            magnitude[bin] = MIN_DB;
+        }
+    }
+    
+    std::fill_n(canvas_buffer_, canvas_width_ * canvas_height_, COLOR_BLACK);
+    
+    // Draw spectrum type name at top center
+    draw_spectrum_name(canvas_buffer_, canvas_width_, canvas_height_, "EQUALIZER");
+    
+    // Draw amplitude bar at the top
+    int amplitude_bar_height = 20;
+    draw_amplitude_bar(magnitude, bartotal, amplitude_bar_height);
+    
+    int center_x = canvas_width_ / 2;
+    // Calculate center_y to allow balanced space for upward and downward bars
+    // Account for spectrum name area (roughly 25px) and amplitude bar (20px)
+    int reserved_top_space = amplitude_bar_height + 35;  // Space for name + amplitude bar
+    int available_height = canvas_height_ - reserved_top_space;
+    int center_y = reserved_top_space + (available_height / 2);
+    
+    // Calculate separate max heights for up and down - balanced to screen boundaries
+    int bar_max_height_up = center_y - reserved_top_space;        // Space to go up
+    int bar_max_height_down = canvas_height_ - center_y - 5;      // Space to go down (with 5px margin)
+    
+    // Draw filled bars (like an audio equalizer) from center - push up and down
+    for (int k = 1; k < bartotal; k++) {
+        float mag = (magnitude[k] - MIN_DB) / (MAX_DB - MIN_DB);
+        mag = std::max(0.0f, std::min(1.0f, mag));
+        
+        // Use different heights for up and down to reach boundaries
+        int bar_height_up = static_cast<int>(mag * bar_max_height_up);
+        int bar_height_down = static_cast<int>(mag * bar_max_height_down);
+        
+        uint16_t color = get_bar_color(k);
+        
+        // Calculate x offset from center
+        int x_offset = (bar_width * (k - 1)) / 2;  // Half width from center
+        
+        // Draw on right side (center to right)
+        int right_x_pos = center_x + x_offset;
+        if (right_x_pos + bar_width <= canvas_width_) {
+            // Push up from center
+            int y_start = center_y - bar_height_up;
+            int y_end = center_y;
+            
+            for (int y = y_start; y < y_end && y >= 0; y++) {
+                for (int x = right_x_pos; x < right_x_pos + bar_width && x < canvas_width_; x++) {
+                    canvas_buffer_[y * canvas_width_ + x] = color;
+                }
+            }
+        }
+        
+        // Draw on left side (center to left) - mirrored
+        int left_x_pos = center_x - x_offset - bar_width;
+        if (left_x_pos >= 0) {
+            // Push down from center
+            int y_start = center_y;
+            int y_end = center_y + bar_height_down;
+            
+            for (int y = y_start; y < y_end && y < canvas_height_; y++) {
+                for (int x = left_x_pos; x < left_x_pos + bar_width && x < canvas_width_; x++) {
+                    if (x >= 0) {
+                        canvas_buffer_[y * canvas_width_ + x] = color;
+                    }
+                }
+            }
+        }
+    }
+}
+           
 int16_t* LcdDisplay::MakeAudioBuffFFT(size_t sample_count) {
     if (final_pcm_data_fft == nullptr) {
         final_pcm_data_fft = (int16_t *)heap_caps_malloc( sample_count, MALLOC_CAP_SPIRAM);
@@ -2121,6 +2672,56 @@ void LcdDisplay::draw_block(int x,int y,int block_x_size,int block_y_size,uint16
     }
 }
 
+void LcdDisplay::draw_amplitude_bar(const float* magnitude, int magnitude_count, int amplitude_height) {
+    static float prev_amplitude = 0.0f;
+    
+    // Calculate overall amplitude (RMS of all magnitudes)
+    float total_amplitude = 0.0f;
+    for (int i = 0; i < magnitude_count; i++) {
+        total_amplitude += magnitude[i] * magnitude[i];
+    }
+    total_amplitude = sqrtf(total_amplitude / magnitude_count);
+    
+    // Normalize to 0-1 range (assuming max is around 100)
+    total_amplitude = std::max(0.0f, std::min(1.0f, total_amplitude / 100.0f));
+    
+    // Smooth amplitude with interpolation
+    float smoothing_factor = 0.6f;
+    float current_amplitude = prev_amplitude * smoothing_factor + total_amplitude * (1.0f - smoothing_factor);
+    prev_amplitude = current_amplitude;
+    
+    // Clamp amplitude between 0 and 1
+    current_amplitude = std::max(0.0f, std::min(1.0f, current_amplitude));
+    
+    // Draw smooth wave curve for amplitude bar at top
+    int top_margin = 2;  // Space from top
+    
+    for (int x = 0; x < canvas_width_; x++) {
+        // Calculate which bar this x position belongs to for color selection
+        int bar_idx = (x * magnitude_count) / canvas_width_;
+        if (bar_idx >= magnitude_count) bar_idx = magnitude_count - 1;
+        
+        // Get color based on bar position (same gradient as spectrum)
+        uint16_t bar_color = get_bar_color(bar_idx);
+        
+        // Create smooth wave using sine curve
+        float wave_offset = sinf(((float)x / canvas_width_) * 2.0f * M_PI);
+        float amplitude_level = current_amplitude * (0.5f + 0.5f * wave_offset);
+        amplitude_level = std::max(0.0f, amplitude_level);
+        
+        int wave_height = static_cast<int>(amplitude_level * amplitude_height);
+        int y_base = top_margin;
+        
+        // Draw vertical line for this x position (from top_margin down by wave_height)
+        for (int y = y_base; y < y_base + wave_height && y < canvas_height_; y++) {
+            int idx = y * canvas_width_ + x;
+            if (idx >= 0 && idx < canvas_width_ * canvas_height_) {
+                canvas_buffer_[idx] = bar_color;
+            }
+        }
+    }
+}
+
 void LcdDisplay::compute(float* real, float* imag, int n, bool forward) {
     // Bit-reversal permutation
     int j = 0;
@@ -2180,17 +2781,47 @@ uint16_t LcdDisplay::get_bar_color(int x_pos) {
     static bool initialized = false;
     
     if (!initialized) {
-        // Generate gradient from yellow-green -> yellow -> yellow-red
+        // Generate vibrant 5-color spectrum gradient: Red -> Orange -> Yellow -> Blue -> Purple
+        // RGB565 format: R(5bits) G(6bits) B(5bits)
+        
         for (int i = 0; i < BAR_COL_NUM; i++) {
-            if (i < BAR_COL_NUM/2) {
-                // Yellow-green to yellow: increase red component
-                uint8_t r = static_cast<uint8_t>((i / 19.0f) * 31);
-                color_table[i] = (r << 11) | (0x3F << 5);
+            float position = (float)i / (BAR_COL_NUM - 1);  // 0 to 1
+            uint8_t r, g, b;
+            
+            if (position < 0.2f) {
+                // Red (1.0, 0, 0) to Orange (1.0, 0.5, 0)
+                float t = position / 0.2f;
+                r = 31;
+                g = static_cast<uint8_t>(t * 32);
+                b = 0;
+            } else if (position < 0.4f) {
+                // Orange (1.0, 0.5, 0) to Yellow (1.0, 1.0, 0)
+                float t = (position - 0.2f) / 0.2f;
+                r = 31;
+                g = static_cast<uint8_t>(32 + t * 32);
+                b = 0;
+            } else if (position < 0.6f) {
+                // Yellow (1.0, 1.0, 0) to Green-Blue transition (0.0, 1.0, 0.5)
+                float t = (position - 0.4f) / 0.2f;
+                r = static_cast<uint8_t>(31 * (1.0f - t));
+                g = static_cast<uint8_t>(63 - t * 32);
+                b = static_cast<uint8_t>(t * 16);
+            } else if (position < 0.8f) {
+                // Blue (0.0, 0.5, 1.0)
+                float t = (position - 0.6f) / 0.2f;
+                r = 0;
+                g = static_cast<uint8_t>(32 - t * 16);
+                b = static_cast<uint8_t>(16 + t * 15);
             } else {
-                // Yellow to yellow-red: decrease green component
-                uint8_t g = static_cast<uint8_t>((1.0f - (i - 20) / 19.0f * 0.5f) * 63);
-                color_table[i] = (0x1F << 11) | (g << 5);
+                // Blue (0.0, 0.5, 1.0) to Purple (0.8, 0.0, 1.0)
+                float t = (position - 0.8f) / 0.2f;
+                r = static_cast<uint8_t>(t * 25);
+                g = static_cast<uint8_t>(16 - t * 16);
+                b = 31;
             }
+            
+            // Pack into RGB565 format: RRRRR GGGGGG BBBBB
+            color_table[i] = ((r & 0x1F) << 11) | ((g & 0x3F) << 5) | (b & 0x1F);
         }
         initialized = true;
     }

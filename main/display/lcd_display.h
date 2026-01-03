@@ -73,8 +73,28 @@ protected:
     void drawSpectrumIfReady();
     uint16_t get_bar_color(int x_pos);
     void draw_spectrum(float *power_spectrum, int fft_size);
+    void draw_amplitude_bar(const float* magnitude, int magnitude_count, int amplitude_height);
     void draw_bar(int x, int y, int bar_width, int bar_height, uint16_t color, int bar_index);
     void draw_block(int x, int y, int block_x_size, int block_y_size, uint16_t color, int bar_index);
+    
+    // 4 additional spectrum visualization modes
+    void draw_spectrum_wave(float *power_spectrum, int fft_size);      // Kiểu 1: Sóng hình sin
+    void draw_spectrum_circular(float *power_spectrum, int fft_size);  // Kiểu 2: Tròn xoay
+    void draw_spectrum_mirror(float *power_spectrum, int fft_size);    // Kiểu 3: Gương đối xứng
+    void draw_spectrum_equalizer(float *power_spectrum, int fft_size); // Kiểu 4: Equalizer
+    
+    // Random spectrum type selector
+    enum class SpectrumType {
+        CLASSIC = 0,   // Kiểu cổ điển (block)
+        WAVE = 1,      // Kiểu sóng
+        CIRCULAR = 2,  // Kiểu tròn
+        MIRROR = 3,    // Kiểu gương
+        EQUALIZER = 4  // Kiểu equalizer
+    };
+    
+    SpectrumType current_spectrum_type_ = SpectrumType::CLASSIC;
+    void randomize_spectrum_type();
+    void set_spectrum_type(SpectrumType type);
 
     // LVGL variables for FFT canvas or QR code
     int canvas_width_;
@@ -83,7 +103,7 @@ protected:
     uint16_t* canvas_buffer_ = nullptr;
     void create_canvas(int32_t status_bar_height = 0);
 	
-	// --- UI ph�t nh?c tr�n canvas ---
+	// --- UI ph�t nh?c tr�n canvas ---
 	lv_obj_t* music_root_        = nullptr;
 	lv_obj_t* music_date_label_  = nullptr;
 	lv_obj_t* music_title_label_ = nullptr;
@@ -106,14 +126,14 @@ protected:
     LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_t panel, int width, int height);
     
 public:
-	// Lo?i ngu?n ph�t nh?c
+	// Lo?i ngu?n ph�t nh?c
     enum class DisplaySourceType {
         NONE = 0,
         SD_CARD,
         ONLINE,
         RADIO
     };
-    // H�m nh?n di?n source
+    // H�m nh?n di?n source
     DisplaySourceType DetectSourceFromInfo() const;
 
     ~LcdDisplay();

@@ -42,18 +42,20 @@ private:
     bool song_name_displayed_;
 	bool full_info_displayed_;
 	bool fft_started_ = false;
+    bool audio_stream_failed_;  // Flag to track if current stream failed (404, connection error)
+    bool skip_current_song_;    // Flag to skip current song and try next
     
     // Lyrics-related
     std::string current_lyric_url_;
     std::vector<std::pair<int, std::string>> lyrics_;  // Timestamp and lyric text
     std::mutex lyrics_mutex_;  // Mutex to protect the lyrics_ array
-    std::atomic<int> current_lyric_index_;
+    int current_lyric_index_;
     std::thread lyric_thread_;
-    std::atomic<bool> is_lyric_running_;
+    bool is_lyric_running_;
     
-    std::atomic<DisplayMode> display_mode_;
-    std::atomic<bool> is_playing_;
-    std::atomic<bool> is_downloading_;
+    DisplayMode display_mode_;
+    bool is_playing_;
+    bool is_downloading_;
     std::thread play_thread_;
     std::thread download_thread_;
     int64_t current_play_time_ms_;  // Current playback time (milliseconds)
@@ -67,6 +69,9 @@ private:
     size_t buffer_size_;
     static constexpr size_t MAX_BUFFER_SIZE = 256 * 1024;  // 256KB buffer (reduced to minimize brownout risk)
     static constexpr size_t MIN_BUFFER_SIZE = 32 * 1024;   // 32KB minimum playback buffer (reduced to minimize brownout risk)
+    
+    // State protection mutex (for is_playing_, is_downloading_, etc.)
+    mutable std::mutex state_mutex_;
     
     // MP3 decoder-related
     HMP3Decoder mp3_decoder_;
@@ -89,6 +94,9 @@ private:
     
     // ID3 tag handling
     size_t SkipId3Tag(uint8_t* data, size_t size);
+    
+    // URL validation
+    bool ValidateAudioUrl(const std::string& audio_url);
 
     int16_t* final_pcm_data_fft = nullptr;
 
@@ -111,7 +119,7 @@ public:
     
     // Display mode control methods
     void SetDisplayMode(DisplayMode mode);
-    DisplayMode GetDisplayMode() const { return display_mode_.load(); }
+    DisplayMode GetDisplayMode() const { return display_mode_; }
     std::string GetCheckMusicServerUrl();
 };
 

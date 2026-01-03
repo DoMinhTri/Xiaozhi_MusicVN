@@ -259,9 +259,20 @@ void AudioService::AudioInputTask() {
 void AudioService::AudioOutputTask() {
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
-        audio_queue_cv_.wait(lock, [this]() { return !audio_playback_queue_.empty() || service_stopped_; });
+        // Add timeout to prevent indefinite wait and detect underflow conditions
+        auto timeout = std::chrono::milliseconds(100);
+        bool has_data = audio_queue_cv_.wait_for(lock, timeout, [this]() { 
+            return !audio_playback_queue_.empty() || service_stopped_; 
+        });
+        
         if (service_stopped_) {
             break;
+        }
+
+        if (!has_data || audio_playback_queue_.empty()) {
+            // Timeout occurred - playback buffer is empty (underflow)
+            // This is expected when waiting for decode queue to fill up
+            continue;
         }
 
         auto task = std::move(audio_playback_queue_.front());
@@ -283,7 +294,7 @@ void AudioService::AudioOutputTask() {
 #if CONFIG_USE_SERVER_AEC
         /* Record the timestamp for server AEC */
         if (task->timestamp > 0) {
-            lock.lock();
+            std::lock_guard<std::mutex> ts_lock(audio_queue_mutex_);
             timestamp_queue_.push_back(task->timestamp);
         }
 #endif
@@ -304,8 +315,10 @@ void AudioService::OpusCodecTask() {
             break;
         }
 
-        /* Decode the audio from decode queue */
-        if (!audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE) {
+        bool has_decode_work = !audio_decode_queue_.empty() && audio_playback_queue_.size() < MAX_PLAYBACK_TASKS_IN_QUEUE;
+        bool has_encode_work = !audio_encode_queue_.empty() && audio_send_queue_.size() < MAX_SEND_PACKETS_IN_QUEUE;
+
+        if (has_decode_work) {
             auto packet = std::move(audio_decode_queue_.front());
             audio_decode_queue_.pop_front();
             audio_queue_cv_.notify_all();
@@ -325,18 +338,16 @@ void AudioService::OpusCodecTask() {
                     task->pcm = std::move(resampled);
                 }
 
-                lock.lock();
-                audio_playback_queue_.push_back(std::move(task));
-                audio_queue_cv_.notify_all();
+                {
+                    std::lock_guard<std::mutex> task_lock(audio_queue_mutex_);
+                    audio_playback_queue_.push_back(std::move(task));
+                    audio_queue_cv_.notify_all();
+                }
             } else {
                 ESP_LOGE(TAG, "Failed to decode audio");
-                lock.lock();
             }
             debug_statistics_.decode_count++;
-        }
-        
-        /* Encode the audio to send queue */
-        if (!audio_encode_queue_.empty() && audio_send_queue_.size() < MAX_SEND_PACKETS_IN_QUEUE) {
+        } else if (has_encode_work) {
             auto task = std::move(audio_encode_queue_.front());
             audio_encode_queue_.pop_front();
             audio_queue_cv_.notify_all();
@@ -348,23 +359,25 @@ void AudioService::OpusCodecTask() {
             packet->timestamp = task->timestamp;
             if (!opus_encoder_->Encode(std::move(task->pcm), packet->payload)) {
                 ESP_LOGE(TAG, "Failed to encode audio");
-                continue;
-            }
-
-            if (task->type == kAudioTaskTypeEncodeToSendQueue) {
-                {
-                    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-                    audio_send_queue_.push_back(std::move(packet));
+            } else {
+                if (task->type == kAudioTaskTypeEncodeToSendQueue) {
+                    {
+                        std::lock_guard<std::mutex> task_lock(audio_queue_mutex_);
+                        audio_send_queue_.push_back(std::move(packet));
+                        audio_queue_cv_.notify_all();
+                    }
+                    if (callbacks_.on_send_queue_available) {
+                        callbacks_.on_send_queue_available();
+                    }
+                } else if (task->type == kAudioTaskTypeEncodeToTestingQueue) {
+                    std::lock_guard<std::mutex> task_lock(audio_queue_mutex_);
+                    audio_testing_queue_.push_back(std::move(packet));
+                    audio_queue_cv_.notify_all();
                 }
-                if (callbacks_.on_send_queue_available) {
-                    callbacks_.on_send_queue_available();
-                }
-            } else if (task->type == kAudioTaskTypeEncodeToTestingQueue) {
-                std::lock_guard<std::mutex> lock(audio_queue_mutex_);
-                audio_testing_queue_.push_back(std::move(packet));
             }
             debug_statistics_.encode_count++;
-            lock.lock();
+        } else {
+            lock.unlock();
         }
     }
 
@@ -404,17 +417,35 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
         timestamp_queue_.pop_front();
     }
 
-    audio_queue_cv_.wait(lock, [this]() { return audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE; });
-    audio_encode_queue_.push_back(std::move(task));
-    audio_queue_cv_.notify_all();
+    // Use wait_for with timeout to prevent indefinite blocking
+    auto timeout = std::chrono::milliseconds(100);
+    bool can_push = audio_queue_cv_.wait_for(lock, timeout, [this]() { 
+        return audio_encode_queue_.size() < MAX_ENCODE_TASKS_IN_QUEUE; 
+    });
+    
+    if (can_push) {
+        audio_encode_queue_.push_back(std::move(task));
+        audio_queue_cv_.notify_all();
+    } else {
+        ESP_LOGW(TAG, "Encode queue full (%u/%u), dropping audio frame", audio_encode_queue_.size(), MAX_ENCODE_TASKS_IN_QUEUE);
+    }
 }
 
 bool AudioService::PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket> packet, bool wait) {
     std::unique_lock<std::mutex> lock(audio_queue_mutex_);
     if (audio_decode_queue_.size() >= MAX_DECODE_PACKETS_IN_QUEUE) {
         if (wait) {
-            audio_queue_cv_.wait(lock, [this]() { return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; });
+            // Use wait_for with timeout to prevent indefinite blocking
+            auto timeout = std::chrono::milliseconds(500);
+            bool has_space = audio_queue_cv_.wait_for(lock, timeout, [this]() { 
+                return audio_decode_queue_.size() < MAX_DECODE_PACKETS_IN_QUEUE; 
+            });
+            if (!has_space) {
+                ESP_LOGW(TAG, "Decode queue still full after timeout, packet dropped");
+                return false;
+            }
         } else {
+            ESP_LOGW(TAG, "Decode queue full (%u/%u), packet dropped", audio_decode_queue_.size(), MAX_DECODE_PACKETS_IN_QUEUE);
             return false;
         }
     }

@@ -1,472 +1,391 @@
 <!DOCTYPE html>
-<html>
+<html lang="vi">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>RobotCanTho.com</title>
+    <title>Smart Home & Audio Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        /* ===== Design aligned with wifi_configuration.html ===== */
-        :root {
-            --bg-main: #02030b;
-            --bg-card: #05081c;
-            --bg-card-soft: #070b26;
-            --accent: #00ffd0;
-            --accent-2: #5f89ff;
-            --text-main: #f8f9ff;
-            --text-sub: #a8b0c8;
-            --border-soft: rgba(255, 255, 255, 0.12);
-            --danger: #ff4d4f;
+        /* Tùy chỉnh cho thanh trượt (slider) */
+        input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #10B981; /* Màu xanh ngọc */
+            cursor: pointer;
+            border-radius: 50%;
+            transition: all 0.2s;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3);
         }
-
-        * { box-sizing: border-box; }
-
+        input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #10B981;
+            cursor: pointer;
+            border-radius: 50%;
+            border: none;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.3);
+        }
+        
         body {
-            margin: 0;
-            padding: 20px;
-            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Roboto", sans-serif;
-            background:
-                radial-gradient(circle at top, #151b3c 0, #02030b 55%, #000000 100%),
-                #000000;
-            color: var(--text-main);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            font-family: 'Inter', sans-serif;
+            background-color: #f7f7f7;
         }
 
-        .container {
-            background:
-                radial-gradient(circle at 0 0, rgba(0, 255, 200, 0.18), transparent 60%),
-                radial-gradient(circle at 100% 0, rgba(95, 137, 255, 0.18), transparent 55%),
-                var(--bg-card);
-            border-radius: 22px;
-            padding: 22px 20px 18px;
-            box-shadow:
-                0 24px 60px rgba(0, 0, 0, 0.9),
-                0 0 0 1px rgba(255, 255, 255, 0.04);
-            border: 1px solid rgba(0, 255, 208, 0.22);
-            max-width: 600px;
-            width: 100%;
-        }
-
-        h1 {
-            color: var(--text-main);
-            text-align: center;
-            margin: 0 0 14px 0;
-            font-size: 22px;
-            letter-spacing: 0.02em;
-        }
-
-        .upload-box {
-            border: 1px dashed rgba(0, 255, 200, 0.55);
-            border-radius: 18px;
-            padding: 28px 16px;
-            text-align: center;
-            margin-bottom: 14px;
-            background: rgba(0, 0, 0, 0.45);
-            cursor: pointer;
-            transition: border-color 0.16s ease, background 0.16s ease, transform 0.06s ease;
-        }
-        .upload-box:hover { background: rgba(255, 255, 255, 0.06); transform: translateY(-0.5px); }
-        .upload-box.dragover { background: rgba(95, 137, 255, 0.12); }
-        .upload-icon { font-size: 42px; margin-bottom: 8px; }
-        .upload-text { color: var(--text-main); font-size: 14px; margin-bottom: 4px; }
-        .upload-hint { color: var(--text-sub); font-size: 12px; }
-        input[type="file"] { display: none; }
-
-        .file-info {
-            background: rgba(3, 6, 22, 0.86);
-            border-radius: 14px;
-            padding: 12px;
-            margin-bottom: 14px;
-            display: none;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-        }
-        .file-info.show { display: block; }
-        .file-name { color: var(--text-main); font-weight: 600; word-break: break-all; }
-        .file-size { color: var(--text-sub); font-size: 12px; margin-top: 4px; }
-
-        .progress-container { display: none; margin-bottom: 14px; }
-        .progress-container.show { display: block; }
-        .progress-text {
-            font-size: 13px;
-            color: var(--text-sub);
-            margin-bottom: 6px;
-            display: flex;
-            justify-content: space-between;
-        }
-        .progress-bar {
-            width: 100%;
-            height: 10px;
-            background: rgba(255, 255, 255, 0.12);
-            border-radius: 6px;
-            overflow: hidden;
-        }
-        .progress-fill {
-            height: 100%;
-            background: linear-gradient(135deg, var(--accent), var(--accent-2));
-            width: 0%;
-            transition: width 0.3s ease;
-        }
-
-        .buttons { display: flex; gap: 10px; margin-top: 14px; }
-        button {
-            flex: 1;
-            padding: 10px 12px;
-            border: none;
-            border-radius: 999px;
-            font-size: 14px;
-            font-weight: 700;
-            cursor: pointer;
-            transition: background 0.16s ease, box-shadow 0.16s ease, transform 0.06s ease;
-        }
-        .btn-upload {
-            background: linear-gradient(135deg, var(--accent), var(--accent-2));
-            color: #02040d;
-            box-shadow: 0 12px 28px rgba(0, 255, 200, 0.35);
-        }
-        .btn-upload:hover:not(:disabled) { box-shadow: 0 16px 34px rgba(0, 255, 200, 0.55); transform: translateY(-0.5px); }
-        .btn-upload:disabled { background: linear-gradient(135deg, #555d78, #30374d); cursor: not-allowed; box-shadow: none; opacity: 0.75; }
-        .btn-cancel { background: rgba(255, 255, 255, 0.14); color: var(--text-main); border: 1px solid rgba(255, 255, 255, 0.16); }
-        .btn-cancel:hover { background: rgba(255, 255, 255, 0.22); }
-
-        .status {
-            padding: 12px;
-            border-radius: 12px;
-            margin-bottom: 14px;
-            display: none;
-            text-align: center;
-            font-weight: 600;
-            border: 1px solid rgba(255, 255, 255, 0.12);
-        }
-        .status.show { display: block; }
-        .status.success { background: rgba(0, 255, 171, 0.12); color: var(--text-main); border-color: rgba(0, 255, 171, 0.35); }
-        .status.error { background: rgba(255, 77, 79, 0.12); color: var(--text-main); border-color: rgba(255, 77, 79, 0.35); }
-        .status.info { background: rgba(95, 137, 255, 0.12); color: var(--text-main); border-color: rgba(95, 137, 255, 0.35); }
-
-        .info-box {
-            background:
-                radial-gradient(circle at top left, rgba(0, 255, 200, 0.08), transparent 65%),
-                radial-gradient(circle at bottom right, rgba(95, 137, 255, 0.12), transparent 55%),
-                var(--bg-card-soft);
-            border-left: 4px solid var(--accent);
-            padding: 12px;
-            border-radius: 14px;
-            font-size: 12px;
-            color: var(--text-sub);
-            line-height: 1.6;
-            margin-top: 14px;
-            border: 1px solid rgba(255, 255, 255, 0.06);
-        }
-
-        .tabs {
-            display: flex;
-            gap: 8px;
-            margin-bottom: 18px;
-            background: rgba(0, 0, 0, 0.3);
-            padding: 4px;
-            border-radius: 16px;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .tab-btn {
-            flex: 1;
-            padding: 10px 12px;
-            border: none;
-            border-radius: 12px;
-            font-size: 13px;
-            font-weight: 600;
-            cursor: pointer;
-            background: transparent;
-            color: var(--text-sub);
+        /* Style cho khu vực Upload (Asset Update) */
+        .upload-box-dash {
+            border: 2px dashed #10B981;
             transition: all 0.2s ease;
         }
-
-        .tab-btn:hover {
-            background: rgba(255, 255, 255, 0.08);
-            color: var(--text-main);
-        }
-
-        .tab-btn.active {
-            background: linear-gradient(135deg, var(--accent), var(--accent-2));
-            color: #02040d;
-            box-shadow: 0 4px 12px rgba(0, 255, 200, 0.3);
-        }
-
-        .help-links {
-            margin-top: 10px;
-            font-size: 12px;
-        }
-
-        .help-links a {
-            color: var(--accent);
-            text-decoration: none;
-        }
-
-        .help-links a:hover {
-            text-decoration: underline;
+        .upload-box-dash.dragover {
+            background-color: rgba(16, 185, 129, 0.1);
+            transform: scale(1.02);
         }
     </style>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'primary-green': '#10B981',
+                        'primary-gray': '#4B5563',
+                    }
+                }
+            }
+        }
+    </script>
 </head>
-<body>
-    <div class="container">
-        <h1>🚀 RobotCanTho.com</h1>
+<body class="min-h-screen p-4 sm:p-8 flex justify-center items-start">
+
+    <div id="app-container" class="w-full max-w-xl bg-white shadow-2xl rounded-xl overflow-hidden">
         
-        <!-- Mode Selection Tabs -->
-        <div class="tabs">
-            <button class="tab-btn active" id="appTab" onclick="switchMode('app')">
-                📱 OTA Application
-            </button>
-            <button class="tab-btn" id="assetsTab" onclick="switchMode('assets')">
-                🎨 Assets Update
-            </button>
-        </div>
-        
-        <div class="upload-box" id="uploadArea">
-            <div class="upload-icon" id="uploadIcon">📦</div>
-            <div class="upload-text">Click or drag file here</div>
-            <div class="upload-hint">Supported: .bin files only</div>
-            <input type="file" id="fileInput" accept=".bin" />
-        </div>
-        
-        <div class="file-info" id="fileInfo">
-            <div class="file-name" id="fileName"></div>
-            <div class="file-size" id="fileSize"></div>
-        </div>
-        
-        <div class="status" id="status"></div>
-        
-        <div class="progress-container" id="progressContainer">
-            <div class="progress-text">
-                <span id="progressText">Uploading...</span>
-                <span id="progressPercent">0%</span>
+        <header class="p-4 bg-primary-green text-white">
+            <h1 class="text-2xl font-bold">Bảng Điều Khiển Thiết Bị</h1>
+        </header>
+
+        <nav class="flex border-b border-gray-200 bg-gray-50">
+            <button id="tab-smart" onclick="switchTab('smart')" class="tab-button w-1/4 py-3 text-xs sm:text-sm font-medium transition-all border-b-4 border-transparent hover:bg-gray-100">Smart Home</button>
+            <button id="tab-audio" onclick="switchTab('audio')" class="tab-button w-1/4 py-3 text-xs sm:text-sm font-medium transition-all border-b-4 border-transparent hover:bg-gray-100">AGC</button>
+            <button id="tab-radio" onclick="switchTab('radio')" class="tab-button w-1/4 py-3 text-xs sm:text-sm font-medium transition-all border-b-4 border-transparent hover:bg-gray-100">Radio</button>
+            <button id="tab-update" onclick="switchTab('update')" class="tab-button w-1/4 py-3 text-xs sm:text-sm font-medium transition-all border-b-4 border-transparent hover:bg-gray-100 text-blue-600">Update</button>
+        </nav>
+
+        <div class="p-4 sm:p-6 space-y-6">
+            
+            <div id="content-smart" class="tab-content space-y-6">
+                <div id="device-controls" class="space-y-4">
+                    <div class="device-row flex items-center justify-between bg-gray-50 p-3 rounded-lg shadow-sm">
+                        <input type="text" id="den1-name" data-id="1" placeholder="Tên Thiết Bị 1" class="device-name-input w-2/3 rounded-lg border border-gray-300 px-3 py-2 mr-3">
+                        <button id="den1-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                    </div>
+                    <div class="device-row flex items-center justify-between bg-gray-50 p-3 rounded-lg shadow-sm">
+                        <input type="text" id="den2-name" data-id="2" placeholder="Tên Thiết Bị 2" class="device-name-input w-2/3 rounded-lg border border-gray-300 px-3 py-2 mr-3">
+                        <button id="den2-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                    </div>
+                    <div class="device-row flex items-center justify-between bg-gray-50 p-3 rounded-lg shadow-sm">
+                        <input type="text" id="den3-name" data-id="3" placeholder="Tên Thiết Bị 3" class="device-name-input w-2/3 rounded-lg border border-gray-300 px-3 py-2 mr-3">
+                        <button id="den3-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                    </div>
+                    <div class="device-row flex items-center justify-between bg-gray-50 p-3 rounded-lg shadow-sm">
+                        <input type="text" id="den4-name" data-id="4" placeholder="Tên Thiết Bị 4" class="device-name-input w-2/3 rounded-lg border border-gray-300 px-3 py-2 mr-3">
+                        <button id="den4-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                    </div>
+                </div>
+                <button onclick="saveDevices()" class="w-full mt-6 py-3 bg-primary-green text-white font-semibold rounded-lg shadow-md hover:bg-green-600 transition duration-150">Lưu Cài Đặt (Send GET URL)</button>
+                <p id="save-message" class="hidden mt-4 p-3 text-sm text-green-700 bg-green-100 border border-green-300 rounded-lg break-words"></p>
             </div>
-            <div class="progress-bar">
-                <div class="progress-fill" id="progressFill"></div>
+            
+            <div id="content-audio" class="tab-content space-y-6 hidden">
+                <div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg shadow-sm">
+                    <span class="font-medium text-gray-800">AGC Wake Word</span>
+                    <button id="agcw-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                </div>
+                <div class="flex justify-between items-center bg-gray-50 p-3 rounded-lg shadow-sm">
+                    <span class="font-medium text-gray-800">AGC Audio</span>
+                    <button id="agca-toggle" class="toggle-btn w-14 h-8 flex items-center rounded-full p-1 shadow-inner transition-colors duration-300" onclick="toggleButton(this)" data-state="0"><div class="dot w-6 h-6 bg-white rounded-full shadow-md transition duration-300 transform translate-x-0"></div></button>
+                </div>
+                <div class="pt-4 space-y-3">
+                    <div class="flex justify-between items-center"><label class="font-medium text-gray-800">Mức AGC (%)</label><span id="agc-level-value" class="text-lg font-bold text-primary-green">50</span></div>
+                    <input type="range" id="agc-level-slider" min="1" max="100" value="50" oninput="updatePercentageValue(this.value, 'agc-level-value')" class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer">
+                </div>
+                <button onclick="saveAudioSettings()" class="w-full mt-6 py-3 bg-primary-green text-white font-semibold rounded-lg shadow-md hover:bg-green-600">Lưu Cài Đặt Audio</button>
+                <p id="audio-save-message" class="hidden mt-4 p-3 text-sm text-green-700 bg-green-100 border border-green-300 rounded-lg break-words"></p>
             </div>
-        </div>
-        
-        <div class="buttons">
-            <button class="btn-upload" id="uploadBtn" onclick="uploadFile()">Upload & Update</button>
-            <button class="btn-cancel" id="cancelBtn" onclick="cancelUpload()" style="display:none;">Cancel</button>
-        </div>
-        
-        <div class="info-box" id="infoBox">
-            <strong>⚠️ Important:</strong><br>
-            • File must be valid ESP32 firmware (.bin)<br>
-            • Do not turn off device during update<br>
-            • Update takes 1-3 minutes<br>
-            • Device will reboot automatically
-        </div>
-        <div class="help-links" style="display: none;">
-            Cần hỗ trợ thêm? Liên hệ Zalo nhóm hỗ trợ Xiaozhi AI-IoT Vietnam: 
-            <a href="https://zalo.me/g/fsyuiz890" target="_blank" rel="noopener noreferrer">bấm vào đây</a>.
+
+            <div id="content-radio" class="tab-content space-y-6 hidden">
+                <div id="radio-stations-container" class="space-y-3"><p class="text-gray-500 text-sm italic" id="radio-placeholder">Bấm "Thêm Kênh" để bắt đầu.</p></div>
+                <div class="flex space-x-4 mt-6">
+                    <button onclick="addRadioStation()" class="flex-1 py-3 bg-blue-500 text-white font-semibold rounded-lg shadow-md hover:bg-blue-600">Thêm Kênh</button>
+                    <button onclick="saveRadioSettings()" class="flex-1 py-3 bg-primary-green text-white font-semibold rounded-lg shadow-md hover:bg-green-600">Lưu Cài Đặt</button>
+                </div>
+                <p id="radio-save-message" class="hidden mt-4 p-3 text-sm text-green-700 bg-green-100 border border-green-300 rounded-lg break-words"></p>
+            </div>
+
+            <div id="content-update" class="tab-content space-y-6 hidden">
+                <div id="uploadArea" class="upload-box-dash bg-gray-50 border-2 rounded-xl p-8 text-center cursor-pointer">
+                    <div class="text-4xl mb-2">📦</div>
+                    <p class="text-gray-600 font-medium">Nhấp hoặc kéo thả file .bin vào đây</p>
+                    <p class="text-xs text-gray-400 mt-1">Hỗ trợ định dạng assets binary</p>
+                    <input type="file" id="fileInput" accept=".bin" class="hidden" />
+                </div>
+
+                <div id="fileInfo" class="hidden bg-blue-50 border border-blue-100 p-4 rounded-lg">
+                    <div id="fileName" class="font-bold text-blue-800 text-sm truncate"></div>
+                    <div id="fileSize" class="text-xs text-blue-600 mt-1"></div>
+                </div>
+
+                <div id="progressContainer" class="hidden space-y-2">
+                    <div class="flex justify-between text-xs font-semibold text-gray-600">
+                        <span id="progressText">Đang tải lên...</span>
+                        <span id="progressPercent">0%</span>
+                    </div>
+                    <div class="w-full bg-gray-200 rounded-full h-3">
+                        <div id="progressFill" class="bg-primary-green h-3 rounded-full transition-all duration-300" style="width: 0%"></div>
+                    </div>
+                </div>
+
+                <div id="status" class="hidden p-3 rounded-lg text-sm font-medium text-center"></div>
+
+                <div class="flex space-x-3">
+                    <button id="uploadBtn" onclick="uploadFile()" disabled class="flex-1 py-3 bg-primary-green text-white font-bold rounded-lg shadow-md disabled:bg-gray-300 disabled:cursor-not-allowed transition duration-150">Bắt Đầu Cập Nhật</button>
+                    <button id="cancelBtn" onclick="cancelUpload()" class="hidden flex-1 py-3 bg-red-500 text-white font-bold rounded-lg shadow-md hover:bg-red-600 transition duration-150">Hủy</button>
+                </div>
+
+                <div class="bg-yellow-50 border-l-4 border-yellow-400 p-4 text-xs text-yellow-800 leading-relaxed">
+                    <strong>⚠️ Lưu ý quan trọng:</strong><br>
+                    • Không tắt nguồn thiết bị khi đang update.<br>
+                    • Quá trình có thể mất từ 1-3 phút.<br>
+                    • Thiết bị sẽ tự khởi động lại hoặc áp dụng thay đổi sau khi hoàn tất.
+                </div>
+            </div>
+
         </div>
     </div>
 
     <script>
-        let selectedFile = null;
-        let uploadInProgress = false;
-        let currentMode = 'app'; // 'app' or 'assets'
+        // --- CÁC BIẾN VÀ HÀM CỦA INDEX (GIỮ NGUYÊN) ---
+        let radioStationCounter = 0;
 
-        const uploadArea = document.getElementById('uploadArea');
-        const uploadIcon = document.getElementById('uploadIcon');
-        const fileInput = document.getElementById('fileInput');
-        const fileInfo = document.getElementById('fileInfo');
-        const fileName = document.getElementById('fileName');
-        const fileSize = document.getElementById('fileSize');
-        const uploadBtn = document.getElementById('uploadBtn');
-        const cancelBtn = document.getElementById('cancelBtn');
-        const status = document.getElementById('status');
-        const progressContainer = document.getElementById('progressContainer');
-        const progressFill = document.getElementById('progressFill');
-        const progressText = document.getElementById('progressText');
-        const progressPercent = document.getElementById('progressPercent');
-        const infoBox = document.getElementById('infoBox');
-        const appTab = document.getElementById('appTab');
-        const assetsTab = document.getElementById('assetsTab');
-
-        function switchMode(mode) {
-            currentMode = mode;
-            
-            // Update tabs
-            if (mode === 'app') {
-                appTab.classList.add('active');
-                assetsTab.classList.remove('active');
-                uploadIcon.textContent = '📦';
-                infoBox.innerHTML = `
-                    <strong>⚠️ Important:</strong><br>
-                    • File must be valid ESP32 firmware (.bin)<br>
-                    • Do not turn off device during update<br>
-                    • Update takes 1-3 minutes<br>
-                    • Device will reboot automatically
-                `;
-            } else {
-                assetsTab.classList.add('active');
-                appTab.classList.remove('active');
-                uploadIcon.textContent = '🎨';
-                infoBox.innerHTML = `
-                    <strong>⚠️ Important:</strong><br>
-                    • File must be valid assets binary (.bin)<br>
-                    • Do not turn off device during update<br>
-                    • Update takes 1-3 minutes<br>
-                    • Device will apply assets after upload
-                `;
+        function switchTab(tabName) {
+            const tabs = ['smart', 'audio', 'radio', 'update'];
+            tabs.forEach(tab => {
+                const content = document.getElementById(`content-${tab}`);
+                const button = document.getElementById(`tab-${tab}`);
+                if (content) content.classList.add('hidden');
+                if (button) {
+                    button.classList.remove('text-primary-green', 'border-primary-green');
+                    button.classList.add('text-primary-gray', 'border-transparent');
+                }
+            });
+            const activeContent = document.getElementById(`content-${tabName}`);
+            const activeButton = document.getElementById(`tab-${tabName}`);
+            if (activeContent) activeContent.classList.remove('hidden');
+            if (activeButton) {
+                activeButton.classList.add('text-primary-green', 'border-primary-green');
+                activeButton.classList.remove('text-primary-gray', 'border-transparent');
             }
-            
-            // Reset upload state
-            selectedFile = null;
-            fileInfo.classList.remove('show');
-            status.classList.remove('show');
-            progressContainer.classList.remove('show');
-            uploadBtn.disabled = false;
-            uploadBtn.style.display = 'block';
-            cancelBtn.style.display = 'none';
         }
 
-        uploadArea.addEventListener('click', () => fileInput.click());
+        function toggleButton(button) {
+            let currentStateValue = button.getAttribute('data-state');
+            let isON = currentStateValue === '1';
+            const newStateValue = isON ? '0' : '1';
+            const dot = button.querySelector('.dot');
+            button.setAttribute('data-state', newStateValue);
+            if (!isON) {
+                button.classList.remove('bg-gray-300');
+                button.classList.add('bg-primary-green');
+                dot.classList.add('translate-x-full');
+            } else {
+                button.classList.add('bg-gray-300');
+                button.classList.remove('bg-primary-green');
+                dot.classList.remove('translate-x-full');
+            }
+        }
 
+        function updatePercentageValue(value, elementId) {
+            document.getElementById(elementId).textContent = value;
+        }
+
+        async function loadDeviceData() {
+            const mockDenTxtContent = [
+                {"id": 1, "name": "Đèn trần P. Khách", "state": 1},
+                {"id": 2, "name": "Máy Lạnh P. Ngủ", "state": 0},
+                {"id": 3, "name": "Bình Nước Nóng", "state": 1},
+                {"id": 4, "name": "Cổng Ra Vào", "state": 0}
+            ];
+            const data = await new Promise(resolve => setTimeout(() => resolve(mockDenTxtContent), 500));
+            data.slice(0, 4).forEach((device, index) => {
+                const id = index + 1;
+                const input = document.getElementById(`den${id}-name`);
+                const btn = document.getElementById(`den${id}-toggle`);
+                if (input) input.value = device.name;
+                if (btn) {
+                    btn.setAttribute('data-state', device.state.toString());
+                    const dot = btn.querySelector('.dot');
+                    if(device.state === 1) {
+                        btn.classList.add('bg-primary-green');
+                        dot.classList.add('translate-x-full');
+                    }
+                }
+            });
+        }
+
+        function saveDevices() {
+            const params = [];
+            for (let i = 1; i <= 4; i++) {
+                const name = encodeURIComponent(document.getElementById(`den${i}-name`).value.trim());
+                const state = document.getElementById(`den${i}-toggle`).getAttribute('data-state');
+                params.push(`den${i}=${name}`, `sta${i}=${state}`);
+            }
+            const simulatedUrl = `/save_config?${params.join('&')}`;
+            const msg = document.getElementById('save-message');
+            msg.innerHTML = `<strong>Lưu Smart Home thành công!</strong><br>${simulatedUrl}`;
+            msg.classList.remove('hidden');
+        }
+
+        function saveAudioSettings() {
+            const agcw = document.getElementById('agcw-toggle').getAttribute('data-state');
+            const agca = document.getElementById('agca-toggle').getAttribute('data-state');
+            const agc = document.getElementById('agc-level-slider').value;
+            const url = `/audio_config?agcw=${agcw}&agca=${agca}&agc=${agc}`;
+            const msg = document.getElementById('audio-save-message');
+            msg.innerHTML = `<strong>Lưu Audio thành công!</strong><br>${url}`;
+            msg.classList.remove('hidden');
+        }
+
+        function addRadioStation() {
+            radioStationCounter++;
+            const container = document.getElementById('radio-stations-container');
+            const placeholder = document.getElementById('radio-placeholder');
+            if (placeholder) placeholder.classList.add('hidden');
+            const row = document.createElement('div');
+            row.className = 'radio-row flex items-center bg-gray-50 p-3 rounded-lg shadow-sm space-x-3';
+            row.innerHTML = `<input type="text" placeholder="Tên Kênh" class="radio-name-input w-[30%] rounded-lg border border-gray-300 px-3 py-2 text-sm" value="Kênh ${radioStationCounter}">
+                             <input type="url" placeholder="URL" class="radio-url-input w-[70%] rounded-lg border border-gray-300 px-3 py-2 text-sm" value="http://stream.id${radioStationCounter}.com">`;
+            container.appendChild(row);
+        }
+
+        function saveRadioSettings() {
+            const rows = document.querySelectorAll('.radio-row');
+            let params = [];
+            rows.forEach((row, i) => {
+                const n = encodeURIComponent(row.querySelector('.radio-name-input').value);
+                const u = encodeURIComponent(row.querySelector('.radio-url-input').value);
+                params.push(`name${i+1}=${n}&url${i+1}=${u}`);
+            });
+            const msg = document.getElementById('radio-save-message');
+            msg.innerHTML = `<strong>Lưu Radio thành công!</strong><br>/radio_config?${params.join('&')}`;
+            msg.classList.remove('hidden');
+        }
+
+        // --- CHỨC NĂNG UPDATE (TỪ ASSETS_INDEX.HTML) ---
+        let selectedFile = null;
+        let xhr = null;
+
+        const uploadArea = document.getElementById('uploadArea');
+        const fileInput = document.getElementById('fileInput');
+        const uploadBtn = document.getElementById('uploadBtn');
+        const cancelBtn = document.getElementById('cancelBtn');
+
+        uploadArea.addEventListener('click', () => fileInput.click());
+        
         uploadArea.addEventListener('dragover', (e) => {
             e.preventDefault();
             uploadArea.classList.add('dragover');
         });
 
-        uploadArea.addEventListener('dragleave', () => {
-            uploadArea.classList.remove('dragover');
-        });
+        uploadArea.addEventListener('dragleave', () => uploadArea.classList.remove('dragover'));
 
         uploadArea.addEventListener('drop', (e) => {
             e.preventDefault();
             uploadArea.classList.remove('dragover');
-            if (e.dataTransfer.files.length > 0) {
-                selectFile(e.dataTransfer.files[0]);
-            }
+            if (e.dataTransfer.files.length > 0) selectFile(e.dataTransfer.files[0]);
         });
 
         fileInput.addEventListener('change', (e) => {
-            if (e.target.files.length > 0) {
-                selectFile(e.target.files[0]);
-            }
+            if (e.target.files.length > 0) selectFile(e.target.files[0]);
         });
 
         function selectFile(file) {
             if (!file.name.endsWith('.bin')) {
-                showStatus('❌ Only .bin files supported', 'error');
+                showUpdateStatus('❌ Chỉ hỗ trợ file .bin', 'bg-red-100 text-red-700 border-red-200');
                 return;
             }
-            
             selectedFile = file;
-            fileName.textContent = '📄 ' + file.name;
-            fileSize.textContent = 'Size: ' + formatFileSize(file.size);
-            fileInfo.classList.add('show');
+            document.getElementById('fileName').textContent = '📄 ' + file.name;
+            document.getElementById('fileSize').textContent = 'Kích thước: ' + (file.size / 1024 / 1024).toFixed(2) + ' MB';
+            document.getElementById('fileInfo').classList.remove('hidden');
             uploadBtn.disabled = false;
-        }
-
-        function formatFileSize(bytes) {
-            if (bytes === 0) return '0 Bytes';
-            const k = 1024;
-            const sizes = ['Bytes', 'KB', 'MB'];
-            const i = Math.floor(Math.log(bytes) / Math.log(k));
-            return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+            document.getElementById('status').classList.add('hidden');
         }
 
         function uploadFile() {
-            if (!selectedFile) {
-                showStatus('❌ Please select a file', 'error');
-                return;
-            }
+            if (!selectedFile) return;
 
-            uploadInProgress = true;
             uploadBtn.disabled = true;
-            uploadBtn.style.display = 'none';
-            cancelBtn.style.display = 'block';
-            progressContainer.classList.add('show');
-            status.classList.remove('show');
-
+            uploadBtn.classList.add('hidden');
+            cancelBtn.classList.remove('hidden');
+            document.getElementById('progressContainer').classList.remove('hidden');
+            
             const formData = new FormData();
             formData.append('file', selectedFile);
 
-            const xhr = new XMLHttpRequest();
-
+            xhr = new XMLHttpRequest();
             xhr.upload.addEventListener('progress', (e) => {
                 if (e.lengthComputable) {
-                    const percentComplete = (e.loaded / e.total) * 100;
-                    progressFill.style.width = percentComplete + '%';
-                    progressPercent.textContent = Math.round(percentComplete) + '%';
-                    progressText.textContent = 'Uploading: ' + formatFileSize(e.loaded) + ' / ' + formatFileSize(e.total);
+                    const percent = Math.round((e.loaded / e.total) * 100);
+                    document.getElementById('progressFill').style.width = percent + '%';
+                    document.getElementById('progressPercent').textContent = percent + '%';
+                    document.getElementById('progressText').textContent = `Đang tải: ${(e.loaded/1024).toFixed(0)}KB / ${(e.total/1024).toFixed(0)}KB`;
                 }
             });
 
             xhr.addEventListener('load', () => {
                 if (xhr.status === 200) {
-                    try {
-                        const resp = JSON.parse(xhr.responseText);
-                        if (resp.success) {
-                            progressFill.style.width = '100%';
-                            progressPercent.textContent = '100%';
-                            
-                            if (currentMode === 'app') {
-                                progressText.textContent = 'Processing firmware...';
-                                setTimeout(() => {
-                                    showStatus('✅ Upload successful! Device updating and rebooting...', 'success');
-                                    setTimeout(() => {
-                                        location.reload();
-                                    }, 10000);
-                                }, 2000);
-                            } else {
-                                progressText.textContent = 'Processing assets...';
-                                setTimeout(() => {
-                                    showStatus('✅ Upload successful! Assets updated.', 'success');
-                                    setTimeout(() => {
-                                        location.reload();
-                                    }, 10000);
-                                }, 1000);
-                            }
-                        } else {
-                            showStatus('❌ Update failed: ' + (resp.error || 'Unknown error'), 'error');
-                            resetUpload();
-                        }
-                    } catch (e) {
-                        showStatus('❌ Invalid response', 'error');
-                        resetUpload();
-                    }
+                    showUpdateStatus('✅ Cập nhật thành công! Đang tải lại...', 'bg-green-100 text-green-700 border-green-200');
+                    setTimeout(() => location.reload(), 3000);
                 } else {
-                    showStatus('❌ Upload failed: ' + xhr.status, 'error');
-                    resetUpload();
+                    showUpdateStatus('❌ Lỗi upload: ' + xhr.status, 'bg-red-100 text-red-700 border-red-200');
+                    resetUploadUI();
                 }
             });
 
             xhr.addEventListener('error', () => {
-                showStatus('❌ Connection error', 'error');
-                resetUpload();
+                showUpdateStatus('❌ Mất kết nối tới thiết bị', 'bg-red-100 text-red-700 border-red-200');
+                resetUploadUI();
             });
 
-            // Choose endpoint based on current mode
-            const endpoint = currentMode === 'app' ? '/ota_upload' : '/assets_upload';
-            xhr.open('POST', endpoint);
+            xhr.open('POST', '/assets_upload');
             xhr.send(formData);
-            showStatus('⏳ Uploading...', 'info');
         }
 
         function cancelUpload() {
-            resetUpload();
-            showStatus('⏸️ Upload cancelled', 'info');
+            if (xhr) xhr.abort();
+            resetUploadUI();
+            showUpdateStatus('⏸️ Đã hủy quá trình', 'bg-gray-100 text-gray-700 border-gray-200');
         }
 
-        function resetUpload() {
-            uploadInProgress = false;
+        function resetUploadUI() {
             uploadBtn.disabled = false;
-            uploadBtn.style.display = 'block';
-            cancelBtn.style.display = 'none';
-            progressContainer.classList.remove('show');
-            progressFill.style.width = '0%';
-            progressPercent.textContent = '0%';
+            uploadBtn.classList.remove('hidden');
+            cancelBtn.classList.add('hidden');
+            document.getElementById('progressContainer').classList.add('hidden');
+            document.getElementById('progressFill').style.width = '0%';
         }
 
-        function showStatus(message, type) {
-            status.textContent = message;
-            status.className = 'status show ' + type;
+        function showUpdateStatus(msg, classes) {
+            const s = document.getElementById('status');
+            s.textContent = msg;
+            s.className = `p-3 rounded-lg text-sm font-medium text-center border ${classes}`;
+            s.classList.remove('hidden');
         }
+
+        window.onload = function() {
+            switchTab('smart');
+            loadDeviceData();
+        };
     </script>
 </body>
 </html>

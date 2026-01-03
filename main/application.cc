@@ -14,6 +14,7 @@
 #include "sd_card.h"
 #include "esp32_sd_music.h"
 #include "tools/alarm_manager.h"
+#include "tools/settings.h"
 
 #include <cstring>
 #include <esp_log.h>
@@ -460,6 +461,8 @@ void Application::Start() {
 
     protocol_->OnConnected([this]() {
         DismissAlert();
+        // Start HTTP server for settings page after protocol is connected
+        //Schedule([this]() { Tools::StartSettingsHttpServer(); });
     });
 
     protocol_->OnNetworkError([this](const std::string& message) {
