@@ -25,13 +25,10 @@
 #define TAG "Esp32Music"
 
 
-// #define DEFAULT_MUSIC_URL "http://192.168.1.2:5555"
-// Fallback server URLs for increased reliability
 // Try primary server first, then fallback servers if primary fails
 static const std::vector<std::string> FALLBACK_MUSIC_URLS = {
-    "http://103.57.220.106:5555",   // Primary server
-    "http://14.225.204.77:5005"     // Fallback server 1
-    //"http://110.42.59.54:2233"    // Fallback server 2
+    "http://14.225.204.77:5005",   // Primary server
+    "http://110.42.59.54:2233"     // Fallback server 1
 };
 
 // ========== Simple ESP32 Authentication Function ==========
